@@ -1,0 +1,80 @@
+# Sample experiment configuration
+# This file is illustrative only and does not connect to any real system.
+
+experiment:
+  id: "exp-placeholder-001"
+  name: "application-step-order-test"
+  status: "draft"
+  owner_team: "agency-digital-services"
+  description: "Test whether changing the order of two non-policy form steps improves completion."
+
+scope:
+  service_area: "benefits-enrollment"
+  jurisdictions:
+    - "state-x"
+  channels:
+    - "web"
+  start_date: "YYYY-MM-DD"
+  planned_end_date: "YYYY-MM-DD"
+
+hypothesis:
+  statement: "If step order is simplified, completion rate may improve without increasing support requests."
+
+variants:
+  control:
+    description: "Current step order"
+    traffic_share: 0.50
+  treatment_a:
+    description: "Simplified step order"
+    traffic_share: 0.50
+
+eligibility:
+  include:
+    - "new applications"
+  exclude:
+    - "staff-assisted sessions"
+
+metrics:
+  primary:
+    name: "completion_rate"
+    definition: "Percent of started sessions that reach successful submission"
+    target_direction: "increase"
+  guardrails:
+    - name: "error_rate"
+      threshold: "must_not_increase_by_more_than_placeholder"
+    - name: "support_contact_rate"
+      threshold: "must_not_increase_by_more_than_placeholder"
+    - name: "time_to_complete"
+      threshold: "must_not_increase_by_more_than_placeholder"
+
+segments:
+  - "region"
+  - "preferred_language"
+  - "device_type"
+
+sample_size:
+  approach: "high-level duration-and-volume based"
+  baseline_volume_assumption: "placeholder"
+  minimum_effect_of_interest: "placeholder"
+  planned_duration_days: 28
+
+analysis:
+  method_summary: "compare group-level rates with uncertainty bounds"
+  missing_data_plan: "document and report excluded records"
+  decision_rule:
+    promote_if: "primary improves and all guardrails remain within threshold"
+    iterate_if: "mixed results with no severe guardrail risk"
+    rollback_if: "any critical guardrail threshold is exceeded"
+
+data_governance:
+  pii_default: "none"
+  approved_pii_fields: []
+  retention_days: 90
+  reporting_level: "aggregated"
+  access_model: "role_based"
+
+operations:
+  launch_checklist_required: true
+  monitoring_cadence: "daily"
+  rollback_owner_role: "operations_lead"
+  incident_escalation_channel: "placeholder-private-channel"
