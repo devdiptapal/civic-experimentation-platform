@@ -1,0 +1,105 @@
+{
+  "experiment": {
+    "id": "exp-doc-upload-001",
+    "name": "Document upload: plain-language requirements list",
+    "status": "draft",
+    "owner_team": "agency-digital-services",
+    "description": "Applicants must upload proof-of-identity and proof-of-income documents to finish a benefits application. Support staff report that applicants frequently upload the wrong document type, are asked to resubmit, and some abandon the application at that point. The tested version replaces a dense paragraph of requirements with a short checklist naming each accepted document and showing an example of each. No eligibility rule, required document, or policy changes; only the on-screen explanation of what to upload."
+  },
+  "scope": {
+    "service_area": "benefits-enrollment / document upload",
+    "jurisdictions": ["example-county"],
+    "channels": ["web"],
+    "start_date": "2026-03-02",
+    "planned_end_date": "2026-03-30"
+  },
+  "hypothesis": {
+    "statement": "If applicants are shown a plain-language checklist of accepted documents instead of a requirements paragraph, more of them will successfully complete the upload step on their first attempt, without increasing calls to the support line."
+  },
+  "assignment": {
+    "salt": "9f2c4a7e1b8d6350fae24c9071b5d8e3",
+    "control_variant": "control",
+    "enrolled_fraction": 1.0
+  },
+  "variants": {
+    "control": {
+      "description": "Current requirements paragraph",
+      "traffic_share": 0.5
+    },
+    "plain_language_checklist": {
+      "description": "Checklist naming each accepted document, with an example of each",
+      "traffic_share": 0.5
+    }
+  },
+  "eligibility": {
+    "include": [
+      { "field": "channel", "operator": "eq", "value": "web" },
+      { "field": "application_type", "operator": "eq", "value": "new" }
+    ],
+    "exclude": [
+      { "field": "staff_assisted", "operator": "eq", "value": true },
+      { "field": "manual_review_flag", "operator": "eq", "value": true }
+    ]
+  },
+  "metrics": {
+    "primary": {
+      "name": "completion_rate",
+      "definition": "Share of applicants who reach the document upload step and successfully submit their documents, counted once per applicant.",
+      "kind": "proportion",
+      "numerator_event": "submission_succeeded",
+      "denominator_event": "experiment_assigned",
+      "target_direction": "increase",
+      "minimum_effect_of_interest": 0.03
+    },
+    "guardrails": [
+      {
+        "name": "error_rate",
+        "definition": "Share of applicants who hit a blocking error during upload.",
+        "kind": "proportion",
+        "numerator_event": "submission_failed",
+        "denominator_event": "experiment_assigned",
+        "max_tolerated_increase": 0.01
+      },
+      {
+        "name": "support_contact_rate",
+        "definition": "Share of applicants who contact the support line during the upload step.",
+        "kind": "proportion",
+        "numerator_event": "support_contacted",
+        "denominator_event": "experiment_assigned",
+        "max_tolerated_increase": 0.02
+      },
+      {
+        "name": "time_to_complete",
+        "definition": "Seconds from reaching the upload step to a successful submission.",
+        "kind": "duration",
+        "numerator_event": "submission_succeeded",
+        "denominator_event": "experiment_assigned",
+        "max_tolerated_increase": 60.0
+      }
+    ]
+  },
+  "sample_size": {
+    "baseline_rate": 0.62,
+    "expected_units_per_group": 6000,
+    "planned_duration_days": 28
+  },
+  "analysis": {
+    "confidence": 0.95,
+    "power": 0.8,
+    "planned_looks": 4,
+    "require_practical_significance": true
+  },
+  "data_governance": {
+    "pii_default": "none",
+    "approved_pii_fields": [],
+    "retention_days": 90,
+    "suppression_threshold": 11,
+    "allow_row_level_export": false,
+    "reporting_level": "aggregated"
+  },
+  "operations": {
+    "launch_checklist_required": true,
+    "monitoring_cadence": "daily",
+    "rollback_owner_role": "operations_lead"
+  }
+}

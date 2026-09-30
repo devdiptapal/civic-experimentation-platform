@@ -1,0 +1,14 @@
+# Default reviewer for everything.
+*       @devdiptapal
+
+# Areas where a change alters the privacy posture, the governance rules, or
+# the comparability of published results. These warrant explicit review even
+# when the diff is small.
+/PRIVACY.md             @devdiptapal
+/GOVERNANCE.md          @devdiptapal
+/SECURITY.md            @devdiptapal
+/src/civicexp/privacy.py    @devdiptapal
+/src/civicexp/stats.py      @devdiptapal
+/src/civicexp/analysis.py   @devdiptapal
+/src/civicexp/lifecycle.py  @devdiptapal
+/docs/Metrics-Schema.md     @devdiptapal

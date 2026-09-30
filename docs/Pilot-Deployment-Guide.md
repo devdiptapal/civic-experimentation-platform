@@ -7,6 +7,28 @@ Use this guide with:
 - `docs/Experiment-Approval-Checklist.md`
 - `PRIVACY.md`
 
+**Tooling for each step.** The platform now implements most of what this
+guide describes. Where a step has a command, it is shown inline. A complete
+worked example following this guide start to finish is in
+[`examples/sf-hsa-document-upload/`](../examples/sf-hsa-document-upload/).
+
+| Step in this guide | Command |
+| --- | --- |
+| 5. Complete the evaluation plan | `civicexp validate experiment.json` |
+| 5. Check the pilot can answer its question | `civicexp power --config experiment.json --available N` |
+| 6. Confirm the split before launch | `civicexp preview experiment.json --units 10000` |
+| 6. Dry-run the readout on synthetic data | `civicexp simulate` then `civicexp report` |
+| 7. Record each reviewer sign-off | `ExperimentLifecycle.sign_off(...)` |
+| 8. Monitor guardrails | `civicexp analyze` (exit code 2 on a breach) |
+| 9. Produce the readout | `civicexp report experiment.json events.jsonl --out readout.md` |
+| 10. Confirm the record was not altered | `civicexp verify audit-log.jsonl` |
+
+**One warning before you start.** Generate your own assignment salt with
+`civicexp salt`, and treat the config containing it as a secret. It keys the
+HMAC that pseudonymizes applicant identifiers, and identifier spaces in
+benefits systems are small enough to brute-force if the salt leaks. See
+[Threat-Model.md](Threat-Model.md#t5--pseudonym-reversal-by-guessing-identifiers).
+
 ## 1. Define Pilot Scope and Outcome
 
 Document:

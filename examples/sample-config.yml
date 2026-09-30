@@ -1,12 +1,22 @@
-# Sample experiment configuration
-# This file is illustrative only and does not connect to any real system.
+# Sample experiment configuration (YAML).
+#
+# This file is illustrative and connects to no real system, but unlike a
+# sketch it is *valid*: `civicexp validate examples/sample-config.yml`
+# loads it without errors. A sample configuration that the validator
+# rejects teaches the wrong shape, so this one is checked by the test suite.
+#
+# YAML requires PyYAML (`pip install 'civicexp[yaml]'`). The equivalent JSON
+# in examples/sf-hsa-document-upload/experiment.json loads with no
+# third-party package at all.
 
 experiment:
   id: "exp-placeholder-001"
   name: "application-step-order-test"
   status: "draft"
   owner_team: "agency-digital-services"
-  description: "Test whether changing the order of two non-policy form steps improves completion."
+  description: >-
+    Test whether changing the order of two non-policy form steps improves
+    completion. No eligibility rule or required field changes.
 
 scope:
   service_area: "benefits-enrollment"
@@ -14,64 +24,120 @@ scope:
     - "state-x"
   channels:
     - "web"
-  start_date: "YYYY-MM-DD"
-  planned_end_date: "YYYY-MM-DD"
+  start_date: "2026-04-01"
+  planned_end_date: "2026-04-29"
 
 hypothesis:
-  statement: "If step order is simplified, completion rate may improve without increasing support requests."
+  statement: >-
+    If step order is simplified, completion rate may improve without
+    increasing support requests.
+
+assignment:
+  # REQUIRED. Generate your own with `civicexp salt` and never reuse one
+  # across experiments. Treat it as a secret: it keys the HMAC that
+  # pseudonymizes applicant identifiers, and publishing it would make those
+  # pseudonyms reversible by guessing identifiers.
+  # See docs/Threat-Model.md#t5.
+  salt: "3d9b1f74c05a8e62b71d4f0a9c8e5327"
+  control_variant: "control"
+  # Share of eligible traffic entered into the evaluation. Ramp with this
+  # rather than by editing traffic_share: widening it never moves anyone
+  # already enrolled.
+  enrolled_fraction: 1.0
 
 variants:
   control:
     description: "Current step order"
     traffic_share: 0.50
-  treatment_a:
+  simplified_order:
     description: "Simplified step order"
     traffic_share: 0.50
 
+# A unit is eligible when it matches every include rule and no exclude rule.
+# Exclusions always win, so a protective carve-out cannot be overridden by a
+# broad inclusion rule added later.
 eligibility:
   include:
-    - "new applications"
+    - field: "application_type"
+      operator: "eq"
+      value: "new"
+    - field: "channel"
+      operator: "in"
+      value: ["web"]
   exclude:
-    - "staff-assisted sessions"
+    - field: "staff_assisted"
+      operator: "eq"
+      value: true
 
 metrics:
   primary:
     name: "completion_rate"
-    definition: "Percent of started sessions that reach successful submission"
+    definition: >-
+      Share of applicants who start the application and successfully submit
+      it, counted once per applicant.
+    kind: "proportion"
+    numerator_event: "submission_succeeded"
+    denominator_event: "experiment_assigned"
     target_direction: "increase"
+    # REQUIRED, and must be a number. This is the absolute change the
+    # program says is worth acting on: 0.03 means three percentage points.
+    # Promotion requires the whole confidence interval to clear it, not just
+    # the point estimate.
+    minimum_effect_of_interest: 0.03
+
+  # Measures that must not get materially worse, whatever happens to the
+  # primary metric. A confirmed breach forces a rollback regardless.
   guardrails:
     - name: "error_rate"
-      threshold: "must_not_increase_by_more_than_placeholder"
-    - name: "support_contact_rate"
-      threshold: "must_not_increase_by_more_than_placeholder"
-    - name: "time_to_complete"
-      threshold: "must_not_increase_by_more_than_placeholder"
+      definition: "Share of applicants who hit a blocking error."
+      kind: "proportion"
+      numerator_event: "submission_failed"
+      denominator_event: "experiment_assigned"
+      # Largest tolerable worsening, as an absolute change. Must be numeric:
+      # a guardrail without a number cannot stop anything.
+      max_tolerated_increase: 0.01
 
-segments:
-  - "region"
-  - "preferred_language"
-  - "device_type"
+    - name: "support_contact_rate"
+      definition: "Share of applicants who contact the support line."
+      kind: "proportion"
+      numerator_event: "support_contacted"
+      denominator_event: "experiment_assigned"
+      max_tolerated_increase: 0.02
+
+    - name: "time_to_complete"
+      definition: "Seconds from assignment to successful submission."
+      kind: "duration"
+      numerator_event: "submission_succeeded"
+      denominator_event: "experiment_assigned"
+      # Seconds, for a duration guardrail.
+      max_tolerated_increase: 60.0
 
 sample_size:
-  approach: "high-level duration-and-volume based"
-  baseline_volume_assumption: "placeholder"
-  minimum_effect_of_interest: "placeholder"
+  baseline_rate: 0.62
+  # Run `civicexp validate` on this file: it reports the smallest effect
+  # this many units could detect, and warns if that is larger than the
+  # minimum_effect_of_interest above.
+  expected_units_per_group: 6000
   planned_duration_days: 28
 
 analysis:
-  method_summary: "compare group-level rates with uncertainty bounds"
-  missing_data_plan: "document and report excluded records"
-  decision_rule:
-    promote_if: "primary improves and all guardrails remain within threshold"
-    iterate_if: "mixed results with no severe guardrail risk"
-    rollback_if: "any critical guardrail threshold is exceeded"
+  confidence: 0.95
+  power: 0.80
+  # How many times the team plans to look at results before the end. The
+  # significance threshold is tightened accordingly. Declaring this honestly
+  # is what keeps daily monitoring from manufacturing findings.
+  planned_looks: 4
+  require_practical_significance: true
 
 data_governance:
   pii_default: "none"
+  # Every entry here needs a documented justification in the approval record.
   approved_pii_fields: []
   retention_days: 90
+  # Aggregates covering fewer units than this are withheld from reports.
+  suppression_threshold: 11
+  allow_row_level_export: false
   reporting_level: "aggregated"
-  access_model: "role_based"
 
 operations:
   launch_checklist_required: true
