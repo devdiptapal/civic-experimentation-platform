@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests (Python ${{ matrix.python-version }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        os: [ubuntu-latest]
+        include:
+          # Confirm the platform runs on the desktop operating systems
+          # agency analysts actually use, not only on Linux CI.
+          - python-version: "3.12"
+            os: macos-latest
+          - python-version: "3.12"
+            os: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Run the suite with no third-party packages installed
+        # The core promise of this project is that it runs on the standard
+        # library alone. If that ever stops being true, this step fails
+        # before anything gets installed to paper over it.
+        run: python -m unittest discover -s tests -t . -v
+        env:
+          PYTHONPATH: src
+
+      - name: Install with optional extras
+        run: python -m pip install -e ".[dev]"
+
+      - name: Re-run under pytest with PyYAML available
+        # Exercises the YAML config path, which the dependency-free run skips.
+        run: python -m pytest -q
+
+  reproducibility:
+    name: Committed example is reproducible
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Regenerate the worked example
+        run: python examples/sf-hsa-document-upload/run_example.py
+
+      - name: Fail if the committed artifacts drifted
+        # The example readouts are evidence of what this software produces.
+        # If the code changes and the committed output does not, the
+        # evidence is stale and this job says so.
+        #
+        # Every generated file is reproducible: the simulation is seeded
+        # and the example pins the audit clock.
+        run: |
+          if ! git diff --exit-code --stat -- examples/sf-hsa-document-upload; then
+            echo "::error::Committed example artifacts are out of date."
+            echo "Run 'make example' and commit the regenerated files."
+            exit 1
+          fi
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install ruff
+      - run: ruff check src tests examples
+
+  privacy-guard:
+    name: No real data committed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan for identifiers that should never be in this repository
+        # A backstop for the rule in SECURITY.md. It cannot prove the
+        # absence of real data, but it catches the common accidents.
+        run: |
+          set -euo pipefail
+          patterns='[0-9]{3}-[0-9]{2}-[0-9]{4}|[A-Za-z0-9._%+-]+@(?!example\.(com|org)\b)[A-Za-z0-9.-]+\.[A-Za-z]{2,}|\b[0-9]{3}-[0-9]{3}-[0-9]{4}\b'
+          if grep -rPn --exclude-dir=.git --exclude-dir=.github "$patterns" . ; then
+            echo "::error::Possible real identifier found. Examples must use synthetic data only."
+            exit 1
+          fi
+          echo "No identifier-shaped strings found."

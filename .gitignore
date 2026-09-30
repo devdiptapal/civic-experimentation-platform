@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# macOS
+.DS_Store
+
+# Pilot working files. Event logs and audit trails from a real pilot must
+# never be committed: see PRIVACY.md. The synthetic files under
+# examples/ are deliberately excepted below.
+*.jsonl
+!examples/**/*.jsonl
+events.jsonl
+readout.md

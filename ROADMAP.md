@@ -14,16 +14,22 @@ The timeline and targets below are planning assumptions, not commitments.
 - Clear privacy and data-handling rules
 - Reusable evaluation and approval templates
 
-**Planned outputs:**
-- Stable `v0.x` documentation set
-- Pilot deployment guide
-- Experiment approval checklist
-- Evaluation template and sample config
+**Outputs:**
+- [x] Stable `v0.x` documentation set
+- [x] Pilot deployment guide
+- [x] Experiment approval checklist
+- [x] Evaluation template and sample config
+- [x] Working reference implementation of all five components (`v0.2.0`)
+- [x] Worked example, reproducible end to end on synthetic data
+- [ ] Pilot with a public benefits agency
 
-**Example KPIs (placeholders):**
-- Pilot setup time reduced from `__` days to `__` days
-- Share of pilot artifacts completed before launch: `__%`
-- Percentage of pilots with explicit rollback criteria: `__%`
+**KPIs:**
+- Pilots with a numeric effect of interest fixed before launch: **100%**
+  (enforced — a config without one does not load)
+- Pilots with explicit rollback criteria: **100%** (enforced — guardrails
+  require numeric tolerances)
+- Pilot setup time: to be measured against a first agency pilot
+- Share of pilot artifacts completed before launch: to be measured
 
 ## Phase 2: Multi-Agency Reuse
 
