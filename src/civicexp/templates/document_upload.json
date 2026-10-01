@@ -1,0 +1,75 @@
+{
+  "_template": {
+    "title": "Document upload step",
+    "summary": "Test a change to the page where applicants upload supporting documents.",
+    "good_for": "Wrong document types, resubmission loops, abandonment at the upload step.",
+    "typical_change": "Replacing a requirements paragraph with a checklist of accepted documents."
+  },
+  "experiment": {
+    "id": "exp-document-upload-001",
+    "name": "Document upload: clearer requirements",
+    "status": "draft",
+    "owner_team": "FILL IN: which team owns this workflow",
+    "description": "FILL IN: what is on the screen today, what you will change, and why you think it will help. Say explicitly what is NOT changing (eligibility rules, required documents, policy)."
+  },
+  "scope": {
+    "service_area": "benefits-enrollment / document upload",
+    "jurisdictions": ["FILL IN"],
+    "channels": ["web"]
+  },
+  "hypothesis": {
+    "statement": "FILL IN: If <the change>, then <the measurable outcome> will improve, without increasing <the thing that must not get worse>."
+  },
+  "assignment": {
+    "salt": "GENERATE WITH: civicexp salt",
+    "control_variant": "control",
+    "enrolled_fraction": 1.0
+  },
+  "variants": {
+    "control": { "description": "Current upload page", "traffic_share": 0.5 },
+    "treatment": { "description": "FILL IN: the changed version", "traffic_share": 0.5 }
+  },
+  "eligibility": {
+    "include": [
+      { "field": "channel", "operator": "eq", "value": "web" },
+      { "field": "application_type", "operator": "eq", "value": "new" }
+    ],
+    "exclude": [
+      { "field": "staff_assisted", "operator": "eq", "value": true },
+      { "field": "manual_review_flag", "operator": "eq", "value": true }
+    ]
+  },
+  "metrics": {
+    "primary": { "use": "completion_rate", "minimum_effect_of_interest": 0.03 },
+    "guardrails": [
+      { "use": "error_rate", "max_tolerated_increase": 0.01 },
+      { "use": "support_contact_rate", "max_tolerated_increase": 0.02 },
+      { "use": "time_to_complete", "max_tolerated_increase": 60.0 }
+    ]
+  },
+  "segments": ["preferred_language", "device_type"],
+  "sample_size": {
+    "baseline_rate": 0.62,
+    "expected_units_per_group": 6000,
+    "planned_duration_days": 28
+  },
+  "analysis": {
+    "confidence": 0.95,
+    "power": 0.8,
+    "planned_looks": 4,
+    "require_practical_significance": true
+  },
+  "data_governance": {
+    "pii_default": "none",
+    "approved_pii_fields": [],
+    "retention_days": 90,
+    "suppression_threshold": 11,
+    "allow_row_level_export": false,
+    "reporting_level": "aggregated"
+  },
+  "operations": {
+    "launch_checklist_required": true,
+    "monitoring_cadence": "daily",
+    "rollback_owner_role": "operations_lead"
+  }
+}

@@ -33,23 +33,33 @@ Both scenarios use the same config and the same random seed. They differ in
 exactly one underlying parameter: the blocking-error rate of the tested
 version.
 
-| | Completion rate | Blocking errors | Decision |
+| | Completion | What else happened | Decision |
 | --- | --- | --- | --- |
-| [**Scenario A**](readout-scenario-a.md) | 62.3% → 69.6% (+7.3, CI +5.2 to +9.5) | unchanged | **PROMOTE** |
-| [**Scenario B**](readout-scenario-b.md) | 62.3% → 69.6% (+7.3, CI +5.2 to +9.5) | 5.0% → 9.5% (+4.5, CI +3.3 to +5.7) | **ROLLBACK** |
+| [**Scenario A**](readout-scenario-a.md) | +7.0 points | nothing | **PROMOTE** |
+| [**Scenario B**](readout-scenario-b.md) | +7.0 points | blocking errors rose 4.5 points | **ROLLBACK** |
+| [**Scenario C**](readout-scenario-c.md) | +7.0 points | no benefit for Spanish speakers | **PROMOTE**, with the gap named |
 
-**Scenario B is the point of this example.** The completion improvement is
-identical and unambiguous — a +7.3 point gain whose entire confidence
+**Scenarios B and C are the point of this example.** All three measure the
+same improvement in completion — a +7 point gain whose entire confidence
 interval clears the 3-point bar the program set. Most dashboards would
-report it as a clear win.
+report all three as clear wins.
 
-The platform recommends reverting the change, because blocking errors rose
-past the 1-point tolerance the agency agreed to before launch. The rule was
-fixed in writing before anyone saw the data, and harm outranks benefit
-unconditionally.
+**B is reverted** because blocking errors rose past the 1-point tolerance
+the agency agreed to before launch. Harm outranks benefit unconditionally,
+and the rule was fixed in writing before anyone saw the data.
 
-A platform reporting only the primary metric would have shipped a change
-that was quietly failing more applicants.
+**C is the harder one.** No guardrail moves. Every headline number says
+ship it. But the checklist was written in English and the translated flow
+still shows the old paragraph, so the entire benefit goes to
+English-preference applicants. The equity review — over groups named
+*before* launch — reports that Spanish-preference applicants saw no
+measurable change.
+
+The recommendation stays PROMOTE, because the change helped many people and
+harmed nobody. What differs is that the report says plainly who it did not
+reach, so the agency ships the translation alongside it instead of
+discovering the gap a year later. Reporting the average alone would have
+widened an access gap and called it a success.
 
 ## Files
 
@@ -57,11 +67,13 @@ that was quietly failing more applicants.
 | --- | --- |
 | [`experiment.json`](experiment.json) | The approved configuration — hypothesis, eligibility, metrics, guardrails, decision rule, privacy posture. This one artifact drives everything. |
 | [`run_example.py`](run_example.py) | The script that generates everything else here |
-| `events-scenario-a.jsonl` | ~49,000 synthetic outcome events, scenario A |
-| `events-scenario-b.jsonl` | ~49,000 synthetic outcome events, scenario B |
+| `events-scenario-a.jsonl` | ~57,000 synthetic outcome events, scenario A |
+| `events-scenario-b.jsonl` | ~57,000 synthetic outcome events, scenario B |
+| `events-scenario-c.jsonl` | ~57,000 synthetic outcome events, scenario C |
 | `audit-log.jsonl` | The hash-chained governance record: sign-offs, approval, start, pause, resume, rollback, archive |
 | [`readout-scenario-a.md`](readout-scenario-a.md) | The plain-language readout an agency would circulate |
 | [`readout-scenario-b.md`](readout-scenario-b.md) | Same, for the rollback scenario |
+| [`readout-scenario-c.md`](readout-scenario-c.md) | Same, for the equity-gap scenario |
 
 ## What the script demonstrates
 
@@ -82,15 +94,19 @@ supposed to fail:
 4. **Approval, start, pause, resume.** A mid-pilot pause for an unrelated
    outage, with the reason recorded in the audit trail.
 
-5. **Assignment and outcome recording** for 12,000 synthetic applicants,
-   with identifiers pseudonymized before anything is written.
+5. **Assignment and outcome recording** for 14,000 synthetic applicants,
+   with identifiers pseudonymized before anything is written and coded
+   segment attributes recorded at entry.
 
-6. **Analysis and the decision rule** applied to both scenarios.
+6. **Trust checks** — sample ratio, completeness, and whether the effect
+   faded over the pilot window — run before any result is reported.
 
-7. **Rollback and archive**, driven by the decision rule rather than by
+7. **Analysis and the decision rule** applied to both scenarios.
+
+8. **Rollback and archive**, driven by the decision rule rather than by
    operator preference.
 
-8. **Tamper detection.** The script edits one approval record in a copy of
+9. **Tamper detection.** The script edits one approval record in a copy of
    the audit log and shows that verification fails and names the entry:
 
    ```

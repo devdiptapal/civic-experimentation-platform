@@ -244,3 +244,122 @@ known:
 
 These are the tests that would catch a method that is internally consistent
 but does not deliver the error rates it advertises.
+
+---
+
+# Added in v0.3: trust checks and equity analysis
+
+The methods above answer "what was the effect?". The ones below answer two
+questions that come first in practice: *can these numbers be trusted at
+all*, and *who did the effect reach*.
+
+## Sample ratio mismatch
+
+**What it tests:** whether the observed split between arms matches the
+configured one, by a chi-square goodness-of-fit test.
+
+**Why it comes first.** If an experiment is configured 50/50 and the arms
+return 6,800 / 5,200, the split did not happen as specified. Units were
+lost, duplicated, or routed wrongly — and whatever caused that is unlikely
+to have affected both arms evenly. A bot filter that drops traffic from one
+variant, a redirect that fires only on the treatment path, a logging
+exception thrown by new code: each produces a healthy-looking effect that is
+entirely an artifact.
+
+An SRM therefore **invalidates the experiment outright**. It is not a
+caveat for the limitations section, and this is the one place where the
+platform refuses to report a decision at all.
+
+**The threshold is α = 0.001, not 0.05.** This check runs on every analysis.
+At 0.05 roughly one healthy pilot in twenty would be declared broken, and a
+tool that cries wolf gets switched off — which costs more than the check is
+worth. 0.001 is standard industry practice for the same reason.
+
+> Fabijan, A., Gupchup, J., Gupta, S., et al. (2019). Diagnosing sample
+> ratio mismatch in online controlled experiments. *KDD '19*, 2156–2164.
+
+The chi-square tail probability is computed from the regularized upper
+incomplete gamma function, implemented on the standard library. For one
+degree of freedom it reduces to the exact normal-tail identity
+`P(X > x) = 2(1 − Φ(√x))`, and the implementation is
+[tested against published critical values](../tests/test_diagnostics.py) at
+1, 2, 3 and 10 degrees of freedom.
+
+## Novelty and primacy
+
+**What it tests:** whether the effect measured in the first half of the
+pilot window matches the second half.
+
+**Novelty** is a response to a change being *different* rather than better;
+it decays as people get used to it. **Primacy** is its mirror: a change
+that looks bad at first because people must relearn a familiar flow, then
+settles. Both produce a statistically solid effect in a short pilot that
+does not survive rollout.
+
+The check splits the window at its midpoint, places each unit in the half
+containing its *entry* event, and compares the two effects. Non-overlapping
+confidence intervals are treated as evidence the effect genuinely changed.
+
+A fading effect is a **warning** — the whole-window figure probably
+overstates what a permanent rollout delivers. A growing effect is a
+**note**, because primacy is one explanation but a mid-pilot operational
+change is another, and the platform cannot distinguish them.
+
+Neither blocks a decision. An effect that changes over time is a reason to
+think, not a reason to discard data.
+
+## Equity segment analysis
+
+**What it tests:** whether the effect differs across groups named before
+launch.
+
+This is the methodological core of the project's equity commitment. An
+aggregate improvement can hide a group the change made worse, and for a
+benefits workflow that is the difference between narrowing an access gap
+and widening one while reporting success.
+
+Two constraints keep it honest:
+
+**Segments are pre-registered.** Only dimensions declared in the
+configuration are analyzed. Searching for a subgroup after seeing the data
+will always find one; this is the garden of forking paths, and the only
+defence is committing in advance.
+
+**Multiplicity is corrected.** Eight segments at α = 0.05 each produce a
+spurious finding roughly a third of the time. Holm-Bonferroni is applied
+across the family. A segment that does not survive correction is reported as
+**WATCH**, not as a finding.
+
+The output distinguishes four states an agency should treat differently:
+
+| Outcome | Meaning | What to do |
+| --- | --- | --- |
+| `HARMED` | Worse for this group, surviving correction | Escalates the decision to rollback |
+| `WATCH` | Suggestive harm, not surviving correction | Monitor; do not act on it alone |
+| `NO_EFFECT` | Measurably no change for this group | If the change helped overall, it did not reach them |
+| `TOO_FEW` | The pilot cannot tell | Not evidence of absence |
+
+The `NO_EFFECT` / `TOO_FEW` distinction matters most. Reporting "no effect"
+for a group of forty people is a false negative dressed as a finding, and it
+is precisely the error that lets an agency conclude a change works for
+everyone when it has simply never measured whether it does.
+
+Segment cells below the disclosure threshold are suppressed before analysis,
+not after: a breakdown covering a handful of people can identify them.
+
+**A confirmed harm escalates the decision to ROLLBACK from any other
+outcome.** This is a values choice expressed in code: a change that improves
+the average while measurably hurting an identifiable group has not improved
+the service, it has redistributed who it fails.
+
+## What these checks still do not cover
+
+- **Interference between units.** If one applicant's experience affects
+  another's, the independence assumption fails and no check here detects it.
+- **Differencing attacks across published segment reports.** Per-cell
+  suppression does not prevent re-identification by combining several
+  reports.
+- **Segment effects as estimates.** A segment result is a hypothesis to
+  confirm in a dedicated pilot, not a precise effect size for that group.
+- **Instrumentation that is wrong but internally consistent.** If an event
+  fires at the wrong moment in both arms equally, every check here passes.

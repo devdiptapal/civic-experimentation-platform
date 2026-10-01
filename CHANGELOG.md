@@ -7,6 +7,98 @@ change interfaces. Changes that affect **comparability of published results**
 are called out explicitly, because they matter more than API breakage for a
 project whose purpose is reusable evidence.
 
+## v0.3.0 — Trust checks, equity review, and a guided setup
+
+Three themes: results you can trust, results that account for everyone, and
+a setup path that does not require writing JSON by hand.
+
+### Added — can these results be trusted?
+
+- **Sample ratio mismatch detection** (`civicexp.diagnostics`). A
+  chi-square goodness-of-fit test on the observed split. A mismatch means
+  the assignment or logging pipeline is broken, so it returns a new
+  `INVALID` decision and blocks any interpretation rather than appearing as
+  a footnote. Threshold α = 0.001, because this check runs on every
+  analysis and a tool that cries wolf gets switched off.
+- **Novelty and primacy detection.** Compares the effect in the first half
+  of the pilot window against the second, so an effect that is fading — a
+  response to the change being new rather than better — is visible before
+  the agency commits to a rollout.
+- **Completeness checks.** Confirms the events each declared metric depends
+  on actually arrived, in both arms.
+- `civicexp doctor` runs these on their own, without producing a decision.
+
+### Added — did it work for everyone?
+
+- **Pre-registered equity segment analysis** (`civicexp.segments`). Groups
+  are declared in the configuration before launch, and every comparison is
+  corrected across the family with Holm-Bonferroni.
+- Results distinguish `HARMED`, `WATCH`, `NO_EFFECT` and `TOO_FEW`, because
+  an agency should act differently on each. Reporting "no effect" for a
+  group of forty people is a false negative dressed as a finding.
+- **A confirmed harm escalates the decision to `ROLLBACK` from any other
+  outcome.** A change that improves the average while measurably hurting an
+  identifiable group has not improved the service.
+- Segment cells below the disclosure threshold are suppressed before
+  analysis, not after.
+- `civicexp equity` reports the review on its own.
+
+### Added — usable without writing JSON
+
+- **`civicexp init`**, a nine-question interview that writes a complete,
+  valid configuration. It runs the power check live, so a pilot too small
+  to answer its own question is caught during planning rather than
+  afterwards. It refuses to invent the minimum effect of interest, which is
+  a program judgment.
+- **Workflow templates** for the three workflows in the roadmap: document
+  upload, appointment reminders, and digital intake (`civicexp templates`).
+- **A standard metric library** (`civicexp metrics`), so a configuration can
+  write `{"use": "completion_rate"}` instead of restating the definition.
+  Covers the roadmap's named outcomes: abandonment, time to complete, and
+  successful first-time submission. Referencing a standard metric is what
+  keeps one agency's result comparable with another's.
+- **`civicexp case-summary`** produces the short public document another
+  jurisdiction can act on, separate from the internal readout and carrying
+  no approval record.
+- **[QUICKSTART.md](QUICKSTART.md)** — fifteen minutes from clone to a
+  finished report.
+- **[docs/Integration-Guide.md](docs/Integration-Guide.md)** — wiring it
+  into a live service, including the fail-open pattern, concurrency, and
+  the assignment algorithm specified precisely enough to reimplement in
+  another language.
+
+### Changed
+
+- The readout gained two sections: *Did this work for everyone?* and *Can
+  these results be trusted?*. Sections renumbered to 1–10.
+- `analyze()` now returns `diagnostics` and `equity` alongside the existing
+  fields, and both appear in `to_dict()`.
+- `AuditLog` and `ExperimentLifecycle` accept an injectable `clock`, which
+  is what makes every committed example artifact byte-for-byte
+  reproducible.
+- The worked example gained **Scenario C**: the change works on average but
+  reaches only English-preference applicants. Same configuration, same
+  headline gain, a materially different report.
+- Configurations without declared equity segments now load with a warning.
+
+### Fixed
+
+- `Assigner` accepted an empty salt at construction and only failed later,
+  at the first assignment.
+- Report sections were numbered independently of the order they rendered
+  in. A test now asserts the numbering is sequential.
+
+### Notes on comparability
+
+`INVALID` is a new decision outcome, distinct from `INCONCLUSIVE`.
+Inconclusive means the pilot was sound but too small; invalid means it was
+broken. Consumers of `to_dict()` should handle the new value.
+
+Results produced before this release did not run trust checks or an equity
+review. They remain valid as far as they go, but a v0.3 readout answers
+questions a v0.2 one did not, and the two are not interchangeable as
+evidence.
+
 ## v0.2.0 — Working reference implementation
 
 The project moves from a documentation scaffold to runnable software. All
@@ -44,7 +136,7 @@ tested, and demonstrated end to end on synthetic data.
 
 ### Added — evidence that it works
 
-- 250 tests, runnable with no third-party packages.
+- 329 tests, runnable with no third-party packages.
 - Statistical functions verified against published reference values, not
   against their own output.
 - Property tests over simulated pilots with known ground truth, checking

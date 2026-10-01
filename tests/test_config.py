@@ -39,6 +39,7 @@ VALID = {
             }
         ],
     },
+    "segments": ["preferred_language"],
     "sample_size": {"baseline_rate": 0.62, "expected_units_per_group": 6000},
     "analysis": {"confidence": 0.95, "power": 0.8, "planned_looks": 1},
     "data_governance": {"retention_days": 90, "suppression_threshold": 11},

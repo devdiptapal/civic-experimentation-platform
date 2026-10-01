@@ -269,3 +269,80 @@ class TestPseudonymization(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDocumentedAlgorithmContract(unittest.TestCase):
+    """Lock the algorithm published in docs/Integration-Guide.md.
+
+    That document tells other teams how to reimplement assignment in another
+    language. If these tests ever fail, either the code changed and the
+    documentation is now wrong, or someone's reimplementation is about to
+    silently disagree with this one about who is in which arm.
+    """
+
+    SALT = "9f2c4a7e1b8d6350fae24c9071b5d8e3"
+
+    def reference_bucket(self, unit_id: str, purpose: str = "assign") -> float:
+        """The algorithm exactly as the integration guide describes it."""
+        import hashlib
+        import hmac
+
+        digest = hmac.new(
+            self.SALT.encode("utf-8"),
+            f"{purpose}:{unit_id}".encode(),
+            hashlib.sha256,
+        ).digest()
+        return int.from_bytes(digest[:8], "big") / 2.0**64
+
+    def test_bucket_matches_the_documented_formula(self):
+        for i in range(200):
+            unit = f"applicant-{i}"
+            self.assertEqual(bucket_of(unit, self.SALT), self.reference_bucket(unit))
+
+    def test_enrollment_uses_the_documented_prefix(self):
+        for i in range(50):
+            unit = f"applicant-{i}"
+            self.assertEqual(
+                bucket_of(unit, self.SALT, purpose="enroll"),
+                self.reference_bucket(unit, "enroll"),
+            )
+
+    def test_pseudonym_is_unprefixed_hmac(self):
+        import hashlib
+        import hmac
+
+        for i in range(50):
+            unit = f"applicant-{i}"
+            expected = hmac.new(
+                self.SALT.encode("utf-8"), unit.encode("utf-8"), hashlib.sha256
+            ).hexdigest()
+            self.assertEqual(pseudonymize(unit, self.SALT), expected)
+
+    def test_variants_are_walked_in_alphabetical_order(self):
+        # The guide tells reimplementers to sort by name. If this changed,
+        # every non-Python integration would disagree about the arms.
+        assigner = Assigner(
+            salt=self.SALT,
+            variants={"zebra": 0.5, "alpha": 0.5},
+        )
+        self.assertEqual([name for name, _ in assigner.variants], ["alpha", "zebra"])
+        for i in range(200):
+            unit = f"applicant-{i}"
+            bucket = self.reference_bucket(unit)
+            expected = "alpha" if bucket < 0.5 else "zebra"
+            self.assertEqual(assigner.assign(unit).variant, expected)
+
+    def test_known_vectors_are_stable_across_releases(self):
+        # Pinned outputs. A change here is a breaking change to every live
+        # pilot, because it moves people between arms mid-flight.
+        assigner = Assigner(
+            salt=self.SALT, variants={"control": 0.5, "treatment": 0.5}
+        )
+        for unit, expected in (
+            ("applicant-1", "treatment"),      # bucket 0.889423
+            ("applicant-2", "control"),        # bucket 0.029970
+            ("applicant-3", "control"),        # bucket 0.156657
+            ("applicant-99213", "treatment"),  # bucket 0.963186
+        ):
+            with self.subTest(unit=unit):
+                self.assertEqual(assigner.assign(unit).variant, expected)

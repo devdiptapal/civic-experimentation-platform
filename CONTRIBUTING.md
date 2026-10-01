@@ -22,7 +22,7 @@ readers is a first-class contribution rather than a lesser one.
 The test suite needs no third-party packages:
 
 ```bash
-make test        # 250 tests, standard library only
+make test        # 329 tests, standard library only
 make example     # regenerate the worked example
 make lint        # ruff (needs: pip install -e '.[dev]')
 make check       # test, then verify the committed example is current

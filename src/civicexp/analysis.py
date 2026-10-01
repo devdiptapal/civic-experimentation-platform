@@ -33,8 +33,10 @@ from enum import Enum
 from typing import Any
 
 from .config import ExperimentConfig, GuardrailSpec
+from .diagnostics import DiagnosticReport, run_diagnostics
 from .errors import AnalysisError
 from .events import EventLog
+from .segments import SegmentAnalysis, analyze_segments
 from .stats import (
     MeanComparison,
     ProportionComparison,
@@ -53,6 +55,9 @@ class Decision(str, Enum):
     ITERATE = "iterate"
     ROLLBACK = "rollback"
     INCONCLUSIVE = "inconclusive"
+    #: The pilot is not interpretable -- a trust check failed. Distinct from
+    #: INCONCLUSIVE, which means the pilot was sound but too small.
+    INVALID = "invalid"
 
     @property
     def headline(self) -> str:
@@ -61,6 +66,7 @@ class Decision(str, Enum):
             Decision.ITERATE: "Keep the current version and revise the test",
             Decision.ROLLBACK: "Stop and revert the tested version",
             Decision.INCONCLUSIVE: "No conclusion can be drawn yet",
+            Decision.INVALID: "These results cannot be used",
         }[self]
 
 
@@ -99,6 +105,8 @@ class AnalysisResult:
     guardrails: tuple[GuardrailResult, ...]
     decision: Decision
     rationale: tuple[str, ...]
+    diagnostics: DiagnosticReport | None = None
+    equity: SegmentAnalysis | None = None
     warnings: tuple[str, ...] = field(default_factory=tuple)
 
     @property
@@ -114,6 +122,26 @@ class AnalysisResult:
             "decision": self.decision.value,
             "rationale": list(self.rationale),
             "warnings": list(self.warnings),
+            "trustworthy": self.diagnostics.is_trustworthy if self.diagnostics else None,
+            "diagnostics": [
+                {"name": d.name, "severity": d.severity.value, "summary": d.summary}
+                for d in (self.diagnostics or ())
+            ],
+            "equity": {
+                "summary": self.equity.summary_line(),
+                "has_concern": self.equity.has_equity_concern,
+                "findings": [
+                    {
+                        "segment": f.label,
+                        "outcome": f.outcome.value,
+                        "effect": f.effect,
+                        "note": f.note,
+                    }
+                    for f in self.equity.findings
+                ],
+            }
+            if self.equity
+            else None,
             "guardrails": [
                 {
                     "name": g.name,
@@ -337,6 +365,13 @@ def analyze(
     )
     warnings.extend(primary.warnings)
 
+    # Trust checks, and the pre-registered equity review. Both run before the
+    # decision rule, because a result from a broken pilot should never reach
+    # it, and a change that harms a group is not a win whatever the aggregate
+    # says.
+    diagnostics = run_diagnostics(config, log, control, treatment_variant)
+    equity = analyze_segments(config, log, control, treatment_variant)
+
     # Small-cell suppression applies to what gets published, and a comparison
     # resting on cells this small should not be published at all.
     threshold = config.privacy.suppression_threshold
@@ -389,6 +424,28 @@ def analyze(
     # -- apply the pre-registered rule ------------------------------------
     rationale: list[str] = []
     breached = [g for g in guardrails if g.breached]
+
+    if not diagnostics.is_trustworthy:
+        # A failed trust check outranks everything, including the guardrails.
+        # The numbers below it are not measuring what they claim to.
+        reasons = "; ".join(d.summary for d in diagnostics.blocking)
+        return AnalysisResult(
+            config=config,
+            control_variant=control,
+            treatment_variant=treatment_variant,
+            primary=primary,
+            guardrails=tuple(guardrails),
+            decision=Decision.INVALID,
+            rationale=(
+                f"This pilot did not pass its data-quality checks: {reasons} "
+                "No decision can be drawn from these results, in either direction. "
+                "Fix the underlying problem and rerun.",
+            ),
+            diagnostics=diagnostics,
+            equity=equity,
+            warnings=tuple(warnings),
+        )
+
     if breached:
         decision = Decision.ROLLBACK
         rationale.append(
@@ -451,6 +508,27 @@ def analyze(
                     "matter. The tested change does not work as intended."
                 )
 
+    # An equity harm overrides a promotion. A change that improves the
+    # average while measurably hurting a group has not improved the service;
+    # it has redistributed who it fails.
+    if equity.harmed and decision is not Decision.ROLLBACK:
+        previous = decision
+        decision = Decision.ROLLBACK
+        names = ", ".join(f.label for f in equity.harmed)
+        rationale.insert(
+            0,
+            f"Escalated from {previous.value} to rollback: the change measurably "
+            f"harmed {names}. A change that makes the service worse for an "
+            "identifiable group goes through the rollback and review path, "
+            "whatever it did to the average.",
+        )
+    elif equity.has_equity_concern or equity.not_reached and decision is Decision.PROMOTE:
+        rationale.append(equity.summary_line())
+
+    for diagnostic in diagnostics:
+        if diagnostic.severity.value in ("warning", "note") and diagnostic.name == "novelty":
+            rationale.append(diagnostic.summary)
+
     watching = [g for g in guardrails if g.watch]
     if watching:
         rationale.append(
@@ -467,5 +545,7 @@ def analyze(
         guardrails=tuple(guardrails),
         decision=decision,
         rationale=tuple(rationale),
+        diagnostics=diagnostics,
+        equity=equity,
         warnings=tuple(warnings),
     )

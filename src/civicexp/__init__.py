@@ -42,7 +42,7 @@ it does not replace an agency's case-management software.
 
 from __future__ import annotations
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 from .analysis import AnalysisResult, Decision, analyze
 from .assignment import NOT_ELIGIBLE, NOT_ENROLLED, Assigner, Assignment
@@ -61,7 +61,7 @@ from .errors import (
 from .events import EVENT_TYPES, Event, EventLog
 from .lifecycle import REQUIRED_APPROVALS, ExperimentLifecycle, State
 from .privacy import PrivacyPolicy, pseudonymize
-from .report import render_markdown, render_text_summary
+from .report import render_case_summary, render_markdown, render_text_summary
 
 __all__ = [
     "__version__",
@@ -83,6 +83,7 @@ __all__ = [
     # Component 4: reporting
     "render_markdown",
     "render_text_summary",
+    "render_case_summary",
     # Component 5: administrative controls
     "ExperimentLifecycle",
     "State",
