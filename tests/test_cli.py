@@ -244,6 +244,121 @@ class TestVerifyAndSalt(CLITestCase):
         self.assertTrue(load_config(data).salt)
 
 
+class TestInitAndCatalogues(CLITestCase):
+    def test_init_from_a_template_writes_a_loadable_config(self):
+        out = self.tmp / "new.json"
+        code, stdout, _ = run("init", "--template", "document-upload", "--out", str(out))
+        self.assertEqual(code, EXIT_OK)
+        self.assertTrue(out.exists())
+        data = json.loads(out.read_text())
+        self.assertNotIn("_template", data)
+        self.assertIn("FILL IN", json.dumps(data))
+        self.assertIn("validate", stdout)
+
+    def test_init_generates_a_real_salt(self):
+        out = self.tmp / "new.json"
+        run("init", "--template", "digital-intake", "--out", str(out))
+        salt = json.loads(out.read_text())["assignment"]["salt"]
+        self.assertEqual(len(salt), 32)
+        int(salt, 16)
+
+    def test_init_refuses_to_overwrite_without_force(self):
+        out = self.tmp / "new.json"
+        out.write_text("{}", encoding="utf-8")
+        code, _, err = run("init", "--template", "document-upload", "--out", str(out))
+        self.assertEqual(code, EXIT_ERROR)
+        self.assertIn("already exists", err)
+
+    def test_init_overwrites_with_force(self):
+        out = self.tmp / "new.json"
+        out.write_text("{}", encoding="utf-8")
+        code, _, _ = run(
+            "init", "--template", "document-upload", "--out", str(out), "--force"
+        )
+        self.assertEqual(code, EXIT_OK)
+        self.assertIn("experiment", json.loads(out.read_text()))
+
+    def test_init_rejects_an_unknown_template(self):
+        code, _, err = run(
+            "init", "--template", "nope", "--out", str(self.tmp / "x.json")
+        )
+        self.assertEqual(code, EXIT_ERROR)
+        self.assertIn("unknown template", err)
+
+    def test_templates_lists_every_workflow(self):
+        code, out, _ = run("templates")
+        self.assertEqual(code, EXIT_OK)
+        for name in ("document-upload", "appointment-reminder", "digital-intake"):
+            self.assertIn(name, out)
+
+    def test_metrics_lists_the_library(self):
+        code, out, _ = run("metrics")
+        self.assertEqual(code, EXIT_OK)
+        self.assertIn("completion_rate", out)
+        self.assertIn("Why it matters", out)
+
+
+class TestDoctorEquityAndCaseSummary(CLITestCase):
+    def events_for(self, **overrides):
+        events = self.tmp / "events.jsonl"
+        argv = [
+            "simulate", str(EXAMPLE), "--out", str(events),
+            "--units", "6000", "--attributes", EXAMPLE_ATTRS,
+        ]
+        for key, value in overrides.items():
+            argv += [f"--{key.replace('_', '-')}", str(value)]
+        code, _, _ = run(*argv)
+        self.assertEqual(code, EXIT_OK)
+        return events
+
+    def test_doctor_passes_a_healthy_pilot(self):
+        code, out, _ = run("doctor", str(EXAMPLE), str(self.events_for()))
+        self.assertIn(code, (EXIT_OK, EXIT_ATTENTION))
+        self.assertIn("can be interpreted", out)
+        self.assertIn("sample_ratio", out)
+
+    def test_case_summary_is_written(self):
+        out_file = self.tmp / "case.md"
+        code, _, _ = run(
+            "case-summary", str(EXAMPLE), str(self.events_for()),
+            "--jurisdiction", "Example County", "--out", str(out_file),
+        )
+        self.assertEqual(code, EXIT_OK)
+        text = out_file.read_text()
+        self.assertIn("# Case summary", text)
+        self.assertIn("Example County", text)
+        self.assertIn("If you are considering the same change", text)
+        self.assertIn("Caveats", text)
+
+    def test_case_summary_carries_no_approval_record(self):
+        # The public summary is a different document from the internal
+        # readout and must not leak the sign-off trail.
+        code, out, _ = run("case-summary", str(EXAMPLE), str(self.events_for()))
+        self.assertEqual(code, EXIT_OK)
+        self.assertNotIn("sign_off", out)
+        self.assertNotIn("approval record", out.lower())
+
+    def test_equity_reports_declared_groups(self):
+        code, out, _ = run("equity", str(EXAMPLE), str(self.events_for()))
+        self.assertIn(code, (EXIT_OK, EXIT_ATTENTION))
+        self.assertIn("preferred_language", out)
+
+    def test_equity_refuses_when_no_segments_are_declared(self):
+        data = json.loads(EXAMPLE.read_text())
+        data["segments"] = []
+        config = self.tmp / "nosegments.json"
+        config.write_text(json.dumps(data), encoding="utf-8")
+        code, _, err = run("equity", str(config), str(self.events_for()))
+        self.assertEqual(code, EXIT_ERROR)
+        self.assertIn("no segments", err)
+
+    def test_validate_reports_the_declared_segments(self):
+        code, out, _ = run("validate", str(EXAMPLE))
+        self.assertEqual(code, EXIT_OK)
+        self.assertIn("Equity:", out)
+        self.assertIn("preferred_language", out)
+
+
 class TestParser(unittest.TestCase):
     def test_version_flag(self):
         with self.assertRaises(SystemExit) as ctx, contextlib.redirect_stdout(io.StringIO()):

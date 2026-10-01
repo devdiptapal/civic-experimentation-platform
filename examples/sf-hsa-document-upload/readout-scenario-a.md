@@ -11,7 +11,8 @@
 
 The tested version performed better by a margin the program agreed in advance would be worth acting on, and no harm measure moved outside its agreed tolerance.
 
-- completion_rate moved +7.3 percentage points, and the entire confidence interval clears the 3.0 point improvement the program said was worth acting on.
+- completion_rate moved +8.7 percentage points, and the entire confidence interval clears the 3.0 point improvement the program said was worth acting on.
+- 1 guardrail(s) warrant monitoring rather than action: error_rate.
 
 ## 2. What was tested
 
@@ -32,12 +33,12 @@ People and transactions meeting the approved criteria were split between **contr
 
 | Version | Units measured | Rate | Plausible range |
 | --- | ---: | ---: | --- |
-| control (current) | 6,101 | 62.3% | 61.0% to 63.5% |
-| plain_language_checklist (tested) | 5,899 | 69.6% | 68.4% to 70.8% |
+| control (current) | 7,105 | 61.7% | 60.5% to 62.8% |
+| plain_language_checklist (tested) | 6,895 | 70.3% | 69.3% to 71.4% |
 
-**Difference:** +7.3 percentage points
+**Difference:** +8.7 percentage points
 
-We are 95% confident the tested version is better, by somewhere between 5.2 and 9.5 percentage points.
+We are 95% confident the tested version is better, by somewhere between 6.7 and 10.7 percentage points.
 
 Before launch, the program recorded that a change of at least **3.0 percentage points** would be worth acting on. That bar is what the recommendation above is measured against, not simply whether a difference exists.
 
@@ -47,35 +48,59 @@ These measures were agreed in advance as things that must not get materially wor
 
 | Harm measure | Status | What happened |
 | --- | --- | --- |
-| error_rate | **OK** | Change of -0.1 percentage points (95% CI -1.1 to 0.9), within the 1.0 point tolerance. |
-| support_contact_rate | **OK** | Change of -0.0 percentage points (95% CI -1.1 to 1.1), within the 2.0 point tolerance. |
-| time_to_complete | **OK** | Change of -18.4 seconds (95% CI -31.6 to -5.1) against a tolerance of 60.0 seconds. |
+| error_rate | **WATCH** | Point estimate worsened by 0.3 percentage points, and the interval reaches 1.2, above the 1.0 point tolerance. Not a confirmed breach, but it warrants monitoring. |
+| support_contact_rate | **OK** | Change of +0.7 percentage points (95% CI -0.4 to 1.7), within the 2.0 point tolerance. |
+| time_to_complete | **OK** | Change of -23.0 seconds (95% CI -35.1 to -10.8) against a tolerance of 60.0 seconds. |
 
-## 5. Limits of this evidence
+## 5. Did this work for everyone?
+
+These groups were named in the approved plan **before** the pilot ran. Looking for a group after seeing results will always find one, so only pre-declared groups are reported here.
+
+**No group was harmed, and no group was left behind by a detectable margin.**
+
+| Group | People (current / tested) | Result | What it means |
+| --- | ---: | --- | --- |
+| preferred_language=en | 5,124 / 4,881 | Helped | The change helped this group by 8.3 percentage points (range 6.5 to 10.2). |
+| preferred_language=es | 1,482 / 1,506 | Helped | The change helped this group by 9.7 percentage points (range 6.3 to 13.1). |
+| preferred_language=zh | 499 / 508 | Helped | The change helped this group by 9.1 percentage points (range 3.3 to 14.9). |
+| device_type=desktop | 2,942 / 2,890 | Helped | The change helped this group by 11.2 percentage points (range 8.8 to 13.6). |
+| device_type=mobile | 4,163 / 4,005 | Helped | The change helped this group by 6.9 percentage points (range 4.8 to 8.9). |
+
+## 6. Can these results be trusted?
+
+These checks look for the ways an experiment can be broken without looking broken. All of them passed, or raised only points to note.
+
+| Check | Result | Finding |
+| --- | --- | --- |
+| Split matched the plan | Pass | The observed split matches the configured one (p = 0.08). |
+| All measurements arrived | Pass | All 4 required event types were recorded in both arms. |
+| Effect held up over time | Pass | The effect was stable across the pilot (first half +9.5 points, second half +7.9 points). |
+
+## 7. Limits of this evidence
 
 - Significance threshold tightened from 0.050 to 0.0127 to account for 4 planned looks at the data.
 - This evaluation shows what happened for the people and transactions included during the pilot window. It does not establish that the same effect would appear for excluded groups, in another jurisdiction, or at a different time of year.
 - The pilot ran for a planned 28 days. Effects that appear only after longer exposure, such as changes in repeat contact, are outside its reach.
 - Adequately powered: with 6,000 units per group this pilot can detect a change of about 3.0 percentage points, and the program cares about 3.0.
 
-## 6. Suggested next steps
+## 8. Suggested next steps
 
 - Roll the tested version out to the full eligible population, keeping the harm measures under observation for at least one further cycle.
 - Record the decision and this readout in the pilot's archive so the evidence is available to the next team that asks the same question.
 - Publish a case summary so other jurisdictions running the same workflow can reuse the finding rather than repeat the pilot.
 
-## 7. Technical appendix
+## 9. Technical appendix
 
 Rates are compared with a two-sided two-proportion z-test. Confidence intervals for each rate use the Wilson score method, and the interval on the difference uses Newcombe's hybrid score method, both of which hold their coverage at the small denominators common in county-scale pilots where the usual normal approximation does not.
 
 - Significance threshold applied: α = 0.0127
 - Corrected from α = 0.050 for 4 planned looks at the data (Šidák)
 - p-value on the primary measure: 0.0000
-- Counts: control 3,799/6,101, tested 4,106/5,899
+- Counts: control 4,381/7,105, tested 4,850/6,895
 - Guardrails were tested as a family of 3 with a Holm-Bonferroni correction, so a single guardrail moving by chance does not halt the pilot.
 - Aggregates covering fewer than 11 units are suppressed under the configured disclosure rule.
 
-## 8. Decision and approval record
+## 10. Decision and approval record
 
 | # | Timestamp (UTC) | Action | Actor | Detail |
 | --- | --- | --- | --- | --- |

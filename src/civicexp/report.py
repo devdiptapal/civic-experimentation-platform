@@ -34,7 +34,7 @@ from .analysis import AnalysisResult, Decision, GuardrailResult
 from .audit import AuditLog
 from .stats import ProportionComparison
 
-__all__ = ["render_markdown", "render_text_summary"]
+__all__ = ["render_markdown", "render_text_summary", "render_case_summary"]
 
 _DECISION_GUIDANCE = {
     Decision.PROMOTE: (
@@ -56,6 +56,11 @@ _DECISION_GUIDANCE = {
         "This pilot cannot answer the question it was designed to answer. The "
         "result is neither a success nor a failure of the tested change; it is a "
         "signal that the pilot needs more data or a rescoped question."
+    ),
+    Decision.INVALID: (
+        "A data-quality check failed, which means the comparison is not measuring "
+        "what it is supposed to measure. This is not a result about the tested "
+        "change at all. Fix the cause and run the pilot again."
     ),
 }
 
@@ -127,6 +132,15 @@ def render_markdown(
     add("")
     add(f"### {result.decision.headline}")
     add("")
+    if result.diagnostics is not None and not result.diagnostics.is_trustworthy:
+        add(
+            "> **Stop here.** This pilot did not pass its data-quality checks, so "
+            "the numbers below describe a broken measurement rather than the "
+            "change you tested. Section 6 says what failed. Nothing in this "
+            "report should be used to decide anything until it is fixed and the "
+            "pilot is rerun."
+        )
+        add("")
     add(_DECISION_GUIDANCE[result.decision])
     add("")
     for reason in result.rationale:
@@ -228,8 +242,92 @@ def render_markdown(
         )
     add("")
 
-    # -- 5. Limitations ----------------------------------------------------
-    add("## 5. Limits of this evidence")
+    # -- 5. Equity ---------------------------------------------------------
+    add("## 5. Did this work for everyone?")
+    add("")
+    if result.equity is None or not result.equity.findings:
+        add(
+            "_No groups were declared for equity review before launch, so this "
+            "pilot cannot say whether the change worked evenly. An overall "
+            "improvement can hide a group it made worse._"
+        )
+    else:
+        equity = result.equity
+        add(
+            "These groups were named in the approved plan **before** the pilot "
+            "ran. Looking for a group after seeing results will always find one, "
+            "so only pre-declared groups are reported here."
+        )
+        add("")
+        add(f"**{equity.summary_line()}**")
+        add("")
+        add("| Group | People (current / tested) | Result | What it means |")
+        add("| --- | ---: | --- | --- |")
+        labels = {
+            "helped": "Helped",
+            "harmed": "**HARMED**",
+            "no_effect": "No change",
+            "too_few": "Too few to tell",
+            "watch": "Watch",
+        }
+        for finding in equity.findings:
+            add(
+                f"| {finding.label} | {finding.control_n:,} / {finding.treatment_n:,} "
+                f"| {labels[finding.outcome.value]} | {finding.note} |"
+            )
+        if equity.suppressed_count:
+            add("")
+            add(
+                f"_{equity.suppressed_count} group(s) are not shown because they "
+                "cover too few people to report without risking identification._"
+            )
+    add("")
+
+    # -- 6. Trustworthiness ------------------------------------------------
+    add("## 6. Can these results be trusted?")
+    add("")
+    if result.diagnostics is None:
+        add("_No data-quality checks were run for this analysis._")
+    else:
+        if result.diagnostics.is_trustworthy:
+            add(
+                "These checks look for the ways an experiment can be broken "
+                "without looking broken. All of them passed, or raised only "
+                "points to note."
+            )
+        else:
+            add(
+                "**At least one check failed. The numbers above are not reliable "
+                "and no decision should be based on them.**"
+            )
+        add("")
+        add("| Check | Result | Finding |")
+        add("| --- | --- | --- |")
+        marks = {
+            "ok": "Pass",
+            "note": "Note",
+            "warning": "**Warning**",
+            "invalid": "**FAILED**",
+        }
+        names = {
+            "sample_ratio": "Split matched the plan",
+            "completeness": "All measurements arrived",
+            "novelty": "Effect held up over time",
+        }
+        for diagnostic in result.diagnostics:
+            label = names.get(diagnostic.name, diagnostic.name)
+            add(
+                f"| {label} | {marks[diagnostic.severity.value]} | "
+                f"{diagnostic.summary} |"
+            )
+        for diagnostic in result.diagnostics:
+            if diagnostic.severity.value in ("warning", "invalid") and diagnostic.detail:
+                add("")
+                add(f"**{names.get(diagnostic.name, diagnostic.name)}:** {diagnostic.detail}")
+    add("")
+
+    # -- 7. Limitations ----------------------------------------------------
+    add("## 7. Limits of this evidence")
     add("")
     limitations = list(result.warnings)
     limitations.append(
@@ -251,15 +349,15 @@ def render_markdown(
         add(f"- {item}")
     add("")
 
-    # -- 6. Next steps -----------------------------------------------------
-    add("## 6. Suggested next steps")
+    # -- 8. Next steps -----------------------------------------------------
+    add("## 8. Suggested next steps")
     add("")
     for step in _next_steps(result):
         add(f"- {step}")
     add("")
 
-    # -- 7. Technical appendix --------------------------------------------
-    add("## 7. Technical appendix")
+    # -- 9. Technical appendix --------------------------------------------
+    add("## 9. Technical appendix")
     add("")
     add(
         "Rates are compared with a two-sided two-proportion z-test. Confidence "
@@ -294,9 +392,9 @@ def render_markdown(
     )
     add("")
 
-    # -- 8. Audit ----------------------------------------------------------
+    # -- 10. Audit ---------------------------------------------------------
     if audit is not None and len(audit):
-        add("## 8. Decision and approval record")
+        add("## 10. Decision and approval record")
         add("")
         add(audit.to_markdown())
         add("")
@@ -369,3 +467,174 @@ def render_text_summary(result: AnalysisResult) -> str:
     else:
         lines.append(f"Guardrails: {len(result.guardrails)} checked, none breached")
     return "\n".join(lines)
+
+
+def render_case_summary(
+    result: AnalysisResult,
+    *,
+    jurisdiction: str = "",
+    generated_at: datetime | None = None,
+) -> str:
+    """A short, public case summary other jurisdictions can reuse.
+
+    The project roadmap commits to publishing "public case summaries
+    describing what was tested, what changed, and what outcomes were
+    measured", so that an agency facing the same problem can act on someone
+    else's evidence instead of repeating the pilot.
+
+    This is deliberately a different document from the internal readout. It
+    is shorter, contains no approval record, and is written for a reader in
+    another agency who has a similar workflow and wants to know three
+    things: would this work for us, what did it cost to find out, and what
+    should we watch for. It also reports negative and mixed results in the
+    same format as positive ones -- a change that did not work is evidence
+    worth publishing, and the file drawer is as much a problem in government
+    as in research.
+    """
+    config = result.config
+    metric = config.primary_metric
+    primary = result.primary
+    stamp = (generated_at or datetime.now(timezone.utc)).strftime("%Y-%m-%d")
+
+    lines: list[str] = []
+    add = lines.append
+
+    add(f"# Case summary: {config.name}")
+    add("")
+    add(f"**Service area:** {config.service_area or 'not recorded'}  ")
+    if jurisdiction:
+        add(f"**Jurisdiction:** {jurisdiction}  ")
+    add(f"**Published:** {stamp}  ")
+    add(f"**Outcome:** {result.decision.value.upper()}")
+    add("")
+    add("---")
+    add("")
+
+    add("## What was tested")
+    add("")
+    add(config.description or "_Not recorded._")
+    add("")
+
+    add("## How it was measured")
+    add("")
+    add(f"- **Measure:** {metric.name} — {metric.definition}")
+    add(
+        f"- **Bar set before launch:** a change of at least "
+        f"{metric.minimum_effect_of_interest * 100:.1f} percentage points"
+    )
+    if isinstance(primary, ProportionComparison):
+        add(
+            f"- **People included:** {primary.control_trials + primary.treatment_trials:,} "
+            f"({primary.control_trials:,} current, {primary.treatment_trials:,} tested)"
+        )
+    if config.planned_duration_days:
+        add(f"- **Ran for:** {config.planned_duration_days} days")
+    add(f"- **Harm measures watched:** {', '.join(g.name for g in result.guardrails) or 'none'}")
+    add("")
+
+    add("## What happened")
+    add("")
+    if isinstance(primary, ProportionComparison):
+        low, high = primary.difference_interval
+        add(
+            f"{metric.name} moved from **{_pct(primary.control_rate)}** to "
+            f"**{_pct(primary.treatment_rate)}** "
+            f"({_signed_pct(primary.absolute_difference)}, plausible range "
+            f"{low * 100:+.1f} to {high * 100:+.1f})."
+        )
+        add("")
+    for reason in result.rationale:
+        add(f"- {reason}")
+    add("")
+
+    if result.equity is not None and result.equity.findings:
+        add("## Who it reached")
+        add("")
+        add(result.equity.summary_line())
+        add("")
+        for finding in result.equity.findings:
+            if finding.outcome.value in ("harmed", "watch", "no_effect"):
+                add(f"- **{finding.label}** — {finding.note}")
+        add("")
+
+    add("## If you are considering the same change")
+    add("")
+    for step in _reuse_notes(result):
+        add(f"- {step}")
+    add("")
+
+    add("## Caveats")
+    add("")
+    add(
+        "These results describe one workflow, in one jurisdiction, over one "
+        "window. Treat them as a reason to run your own evaluation, not as a "
+        "substitute for it. Baseline rates, applicant populations, and the "
+        "surrounding process all differ between agencies, and any of them can "
+        "change the result."
+    )
+    for warning in result.warnings:
+        add(f"- {warning}")
+    add("")
+    add("---")
+    add("")
+    add(
+        "_Produced with the Civic Experimentation Platform. Reuse of this summary "
+        "is encouraged; please keep the caveats attached to the numbers._"
+    )
+    add("")
+    return "\n".join(lines)
+
+
+def _reuse_notes(result: AnalysisResult) -> list[str]:
+    """Advice for a different agency reading this summary."""
+    notes: list[str] = []
+    decision = result.decision
+
+    if decision is Decision.PROMOTE:
+        notes.append(
+            "This change earned adoption here. The effect is specific to this "
+            "population and baseline, so confirm it on your own traffic before "
+            "rolling it out widely."
+        )
+    elif decision is Decision.ROLLBACK:
+        notes.append(
+            "This change was reverted. Read the harm measure above before "
+            "attempting anything similar — the cost was not visible in the "
+            "headline measure."
+        )
+    elif decision is Decision.INCONCLUSIVE:
+        notes.append(
+            "This pilot was too small to answer the question. If your service "
+            "has more traffic, the same test may well be worth running."
+        )
+    elif decision is Decision.INVALID:
+        notes.append(
+            "These results failed their data-quality checks and say nothing "
+            "about the change. Published so the fault is documented rather than "
+            "silently repeated."
+        )
+    else:
+        notes.append(
+            "This change did not earn adoption. A negative result is still "
+            "evidence: it is a test you may not need to repeat."
+        )
+
+    if result.equity is not None and result.equity.has_equity_concern:
+        notes.append(
+            "An equity concern was found. If you run this, declare the same "
+            "groups before launch rather than checking afterwards."
+        )
+    elif result.equity is not None and result.equity.not_reached:
+        notes.append(
+            "The benefit did not reach every group. Check whether your own "
+            "version of this change applies to translated and assisted flows, "
+            "not only the default one."
+        )
+
+    notes.append(
+        f"The configuration that produced this result is reusable: the measure, "
+        f"the bar of {result.config.primary_metric.minimum_effect_of_interest * 100:.1f} "
+        "points, and the harm measures can be adopted as-is so your result stays "
+        "comparable with this one."
+    )
+    return notes

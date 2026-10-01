@@ -47,6 +47,8 @@ class SimulationSpec:
         error_rate: Mapping[str, float] | None = None,
         support_rate: Mapping[str, float] | None = None,
         median_seconds: Mapping[str, float] | None = None,
+        segment_distribution: Mapping[str, Mapping[str, float]] | None = None,
+        completion_overrides: Mapping[str, Mapping[str, float]] | None = None,
         unit_attributes: Mapping[str, object] | None = None,
         units: int = 2000,
         start: datetime | None = None,
@@ -57,6 +59,18 @@ class SimulationSpec:
         self.error_rate = dict(error_rate or {})
         self.support_rate = dict(support_rate or {})
         self.median_seconds = dict(median_seconds or {})
+        # Coded, non-identifying attributes recorded at assignment time, as
+        # {dimension: {value: probability}}. These are what equity segment
+        # analysis groups by.
+        self.segment_distribution = {
+            dim: dict(values) for dim, values in (segment_distribution or {}).items()
+        }
+        # Per-segment completion rates, as {"dimension=value": {variant: rate}}.
+        # Lets a simulation model a change that helps one group and not another,
+        # which is the case the equity review exists to catch.
+        self.completion_overrides = {
+            key: dict(rates) for key, rates in (completion_overrides or {}).items()
+        }
         # Applied to every synthetic unit. Must satisfy the config's
         # eligibility criteria, or the simulation produces no enrolled units.
         self.unit_attributes = dict(unit_attributes or {})
@@ -64,6 +78,17 @@ class SimulationSpec:
         self.start = start or datetime(2026, 3, 2, 9, 0, tzinfo=timezone.utc)
         self.duration_days = duration_days
         self.seed = seed
+
+
+def _draw(rng: random.Random, distribution: Mapping[str, float]) -> str:
+    """Pick a value from a {value: probability} mapping."""
+    threshold = rng.random() * sum(distribution.values())
+    cumulative = 0.0
+    for value, weight in distribution.items():
+        cumulative += weight
+        if threshold < cumulative:
+            return value
+    return next(iter(distribution))
 
 
 def simulate_pilot(
@@ -98,7 +123,16 @@ def simulate_pilot(
         started = spec.start + window * rng.random()
         pseudonym = assignment.unit_pseudonym
 
-        log.record("experiment_assigned", pseudonym, variant, timestamp=started)
+        # Draw this unit's segment values and record them on the entry event,
+        # which is where segment analysis reads them from.
+        segments: dict[str, str] = {}
+        for dimension, distribution in spec.segment_distribution.items():
+            segments[dimension] = _draw(rng, distribution)
+
+        log.record(
+            "experiment_assigned", pseudonym, variant, timestamp=started,
+            payload=segments,
+        )
         log.record(
             "step_viewed",
             pseudonym,
@@ -107,7 +141,15 @@ def simulate_pilot(
             step="document_upload",
         )
 
-        completed = rng.random() < spec.completion_rate.get(variant, 0.5)
+        # A segment override, if one applies to this unit, replaces the
+        # variant-level completion rate.
+        rate = spec.completion_rate.get(variant, 0.5)
+        for dimension, value in segments.items():
+            override = spec.completion_overrides.get(f"{dimension}={value}")
+            if override and variant in override:
+                rate = override[variant]
+                break
+        completed = rng.random() < rate
         errored = rng.random() < spec.error_rate.get(variant, 0.0)
         contacted = rng.random() < spec.support_rate.get(variant, 0.0)
 

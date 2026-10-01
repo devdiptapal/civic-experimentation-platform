@@ -1,0 +1,80 @@
+{
+  "_template": {
+    "title": "Appointment reminder or follow-up message",
+    "summary": "Test the wording or timing of a reminder sent before an appointment or deadline.",
+    "good_for": "Missed appointments, missed document deadlines, no-show rates.",
+    "typical_change": "Plainer wording, naming what to bring, or sending the reminder earlier."
+  },
+  "experiment": {
+    "id": "exp-appointment-reminder-001",
+    "name": "Appointment reminder: plainer wording",
+    "status": "draft",
+    "owner_team": "FILL IN: which team owns this message",
+    "description": "FILL IN: the current message text, the new message text, and why. Note that only the message changes, not the appointment process or any deadline."
+  },
+  "scope": {
+    "service_area": "service-communications / appointment reminders",
+    "jurisdictions": ["FILL IN"],
+    "channels": ["sms", "email"]
+  },
+  "hypothesis": {
+    "statement": "FILL IN: If the reminder says <what>, more people will attend their appointment, without increasing calls to the support line."
+  },
+  "assignment": {
+    "salt": "GENERATE WITH: civicexp salt",
+    "control_variant": "control",
+    "enrolled_fraction": 1.0
+  },
+  "variants": {
+    "control": { "description": "Current reminder text", "traffic_share": 0.5 },
+    "treatment": { "description": "FILL IN: the new reminder text", "traffic_share": 0.5 }
+  },
+  "eligibility": {
+    "include": [
+      { "field": "has_upcoming_appointment", "operator": "eq", "value": true },
+      { "field": "contact_method_on_file", "operator": "eq", "value": true }
+    ],
+    "exclude": [
+      { "field": "opted_out_of_messages", "operator": "eq", "value": true }
+    ]
+  },
+  "metrics": {
+    "primary": {
+      "name": "appointment_attendance_rate",
+      "definition": "Share of people sent a reminder who then attended their appointment, counted once per person.",
+      "kind": "proportion",
+      "numerator_event": "step_completed",
+      "denominator_event": "experiment_assigned",
+      "target_direction": "increase",
+      "minimum_effect_of_interest": 0.04
+    },
+    "guardrails": [
+      { "use": "support_contact_rate", "max_tolerated_increase": 0.02 }
+    ]
+  },
+  "segments": ["preferred_language", "channel"],
+  "sample_size": {
+    "baseline_rate": 0.7,
+    "expected_units_per_group": 3000,
+    "planned_duration_days": 30
+  },
+  "analysis": {
+    "confidence": 0.95,
+    "power": 0.8,
+    "planned_looks": 4,
+    "require_practical_significance": true
+  },
+  "data_governance": {
+    "pii_default": "none",
+    "approved_pii_fields": [],
+    "retention_days": 90,
+    "suppression_threshold": 11,
+    "allow_row_level_export": false,
+    "reporting_level": "aggregated"
+  },
+  "operations": {
+    "launch_checklist_required": true,
+    "monitoring_cadence": "weekly",
+    "rollback_owner_role": "operations_lead"
+  }
+}

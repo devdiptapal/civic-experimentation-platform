@@ -18,12 +18,24 @@ controlled evaluation end to end.
 | 4 | Reporting | [`report.py`](../src/civicexp/report.py) | Produces a standardized readout in plain language |
 | 5 | Administrative control | [`lifecycle.py`](../src/civicexp/lifecycle.py) | Approve, pause, resume, or end an evaluation |
 
+Two further components answer the questions that come *before* "what was
+the effect?":
+
+| Component | Module | What it does |
+| --- | --- | --- |
+| Trust checks | [`diagnostics.py`](../src/civicexp/diagnostics.py) | Sample ratio mismatch, completeness, novelty — can these numbers be trusted at all |
+| Equity review | [`segments.py`](../src/civicexp/segments.py) | Did the effect reach every pre-registered group |
+
 Supporting modules: [`config.py`](../src/civicexp/config.py) validates the
 one artifact an agency actually approves; [`privacy.py`](../src/civicexp/privacy.py)
 enforces the data rules in code; [`audit.py`](../src/civicexp/audit.py)
 keeps a tamper-evident decision trail; [`eligibility.py`](../src/civicexp/eligibility.py)
-holds the declarative rule language; [`simulate.py`](../src/civicexp/simulate.py)
-generates synthetic data for dry runs.
+holds the declarative rule language; [`metrics.py`](../src/civicexp/metrics.py)
+holds the standard metric definitions a config can reference by name;
+[`wizard.py`](../src/civicexp/wizard.py) and
+[`templates/`](../src/civicexp/templates/) turn a conversation into a valid
+configuration; [`simulate.py`](../src/civicexp/simulate.py) generates
+synthetic data for dry runs.
 
 ## How data flows
 
@@ -125,6 +137,24 @@ Counting events would inflate exactly the measures an agency most wants to
 watch: error rate and support-contact rate would both look worse in whichever
 arm frustrates people into retrying, which is the opposite of the signal.
 
+### The checks run in a deliberate order
+
+`analyze()` evaluates in this sequence, and the order encodes what
+outranks what:
+
+1. **Trust checks.** A sample ratio mismatch returns `INVALID` immediately.
+   Nothing below it is evaluated, because the numbers are not measuring the
+   change.
+2. **Guardrails.** A confirmed breach forces `ROLLBACK`.
+3. **The primary metric**, against the practical bar.
+4. **Equity.** A confirmed harm to a pre-registered group escalates to
+   `ROLLBACK` from any other outcome.
+
+`INVALID` and `INCONCLUSIVE` are deliberately distinct. Inconclusive means
+the pilot was sound but too small — run it longer. Invalid means the pilot
+was broken — fix it and start again. Collapsing them would let a broken
+pipeline be mistaken for insufficient traffic.
+
 ### Harm outranks benefit, unconditionally
 
 The decision rule has no trade-off in which a large improvement in the
@@ -214,3 +244,6 @@ The most likely extensions, in rough order of demand:
 | A different storage backend | Reimplement the aggregation methods on `EventLog`. |
 | Stratified or blocked assignment | `Assigner.assign`; keep the deterministic-hash property or the audit guarantees are lost. |
 | A web dashboard | Build on `AnalysisResult.to_dict()`, which is JSON-serializable by design. |
+| A new workflow template | Add a JSON file to `src/civicexp/templates/` and register it in `wizard.TEMPLATES`. |
+| A new standard metric | Add it to `metrics.STANDARD_METRICS`. This is a governance change: it affects comparability across agencies. |
+| Assignment in another language | Reimplement the algorithm documented in [Integration-Guide.md](Integration-Guide.md) and check it against `tests/test_assignment.py::TestDocumentedAlgorithmContract`. |

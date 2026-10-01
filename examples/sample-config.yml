@@ -112,6 +112,13 @@ metrics:
       # Seconds, for a duration guardrail.
       max_tolerated_increase: 60.0
 
+# Groups to check for unequal impact, declared before launch. Searching for
+# a subgroup after seeing the data will always find one, so only these are
+# analyzed. Values are read from the payload recorded at assignment time.
+segments:
+  - "preferred_language"
+  - "device_type"
+
 sample_size:
   baseline_rate: 0.62
   # Run `civicexp validate` on this file: it reports the smallest effect

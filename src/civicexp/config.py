@@ -31,6 +31,7 @@ from typing import Any
 
 from .eligibility import EligibilityCriteria
 from .errors import ConfigError
+from .metrics import expand_metric
 from .privacy import DEFAULT_SUPPRESSION_THRESHOLD, PrivacyPolicy
 from .stats import minimum_detectable_effect, required_sample_size_per_group
 
@@ -62,6 +63,12 @@ class MetricSpec:
     def from_dict(cls, data: Mapping[str, Any], errors: list[str]) -> MetricSpec | None:
         if not isinstance(data, Mapping):
             errors.append("metrics.primary must be a mapping")
+            return None
+        try:
+            # Expand a {"use": "<standard metric>"} reference, if present.
+            data = expand_metric(data)
+        except KeyError as exc:
+            errors.append(f"metrics.primary: {exc.args[0]}")
             return None
         missing = {
             "name",
@@ -132,6 +139,11 @@ class GuardrailSpec:
     ) -> GuardrailSpec | None:
         if not isinstance(data, Mapping):
             errors.append(f"metrics.guardrails[{index}] must be a mapping")
+            return None
+        try:
+            data = expand_metric(data)
+        except KeyError as exc:
+            errors.append(f"metrics.guardrails[{index}]: {exc.args[0]}")
             return None
         kind = str(data.get("kind", "proportion"))
         if kind not in _METRIC_KINDS:
@@ -225,6 +237,7 @@ class ExperimentConfig:
     eligibility: EligibilityCriteria
     primary_metric: MetricSpec
     guardrails: tuple[GuardrailSpec, ...]
+    segments: tuple[str, ...]
     decision: DecisionRule
     privacy: PrivacyPolicy
     baseline_rate: float | None = None
@@ -410,6 +423,28 @@ def load_config(source: str | os.PathLike[str] | Mapping[str, Any]) -> Experimen
             "is causing."
         )
 
+    # -- equity segments ---------------------------------------------------
+    # Pre-registering these is what separates an equity review from a fishing
+    # expedition: searching for a subgroup after seeing the data will always
+    # find one.
+    segments: list[str] = []
+    raw_segments = raw.get("segments") or []
+    if not isinstance(raw_segments, (list, tuple)):
+        errors.append("segments must be a list of attribute names")
+    else:
+        for item in raw_segments:
+            if not isinstance(item, str):
+                errors.append(f"segments entries must be strings, got {item!r}")
+            else:
+                segments.append(item)
+    if not segments:
+        warnings.append(
+            "No segments are declared for equity review. An overall improvement "
+            "can hide a group the change made worse; without declared segments "
+            "this pilot cannot detect that. Consider preferred_language, channel, "
+            "or device_type."
+        )
+
     # -- analysis and decision --------------------------------------------
     analysis = raw.get("analysis") or {}
     decision = DecisionRule.from_dict(analysis, errors)
@@ -499,6 +534,7 @@ def load_config(source: str | os.PathLike[str] | Mapping[str, Any]) -> Experimen
         eligibility=eligibility,
         primary_metric=primary,
         guardrails=tuple(guardrails),
+        segments=tuple(segments),
         decision=decision,
         privacy=privacy,
         baseline_rate=baseline_rate,

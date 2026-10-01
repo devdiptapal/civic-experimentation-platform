@@ -36,11 +36,22 @@ class TestStructure(unittest.TestCase):
             "## 2. What was tested",
             "## 3. The main result",
             "## 4. Checks for unintended harm",
-            "## 5. Limits of this evidence",
-            "## 6. Suggested next steps",
-            "## 7. Technical appendix",
+            "## 7. Limits of this evidence",
+            "## 8. Suggested next steps",
+            "## 9. Technical appendix",
         ):
             self.assertIn(heading, self.markdown)
+
+    def test_sections_are_numbered_in_the_order_they_appear(self):
+        # Regression: the trust section was once numbered 6 but rendered
+        # after section 8, because it was inserted in the wrong place.
+        import re
+
+        numbers = [
+            int(m) for m in re.findall(r"^## (\d+)\. ", self.markdown, re.MULTILINE)
+        ]
+        self.assertEqual(numbers, sorted(numbers), f"sections out of order: {numbers}")
+        self.assertEqual(numbers, list(range(1, len(numbers) + 1)))
 
     def test_recommendation_comes_before_any_number(self):
         recommendation = self.markdown.index("## 1. Recommendation")
@@ -56,11 +67,11 @@ class TestStructure(unittest.TestCase):
         _, markdown = report_for(
             (1200, 100, 2000), (1500, 100, 2000), audit=audit
         )
-        self.assertIn("## 8. Decision and approval record", markdown)
+        self.assertIn("## 10. Decision and approval record", markdown)
         self.assertIn("a.rivera", markdown)
 
     def test_omits_the_audit_section_when_there_is_none(self):
-        self.assertNotIn("## 8.", self.markdown)
+        self.assertNotIn("## 10.", self.markdown)
 
 
 class TestEditorialRules(unittest.TestCase):
@@ -68,7 +79,7 @@ class TestEditorialRules(unittest.TestCase):
         self.result, self.markdown = report_for((1200, 100, 2000), (1500, 100, 2000))
 
     def test_never_reports_an_effect_without_its_interval(self):
-        body = self.markdown.split("## 7. Technical appendix")[0]
+        body = self.markdown.split("## 9. Technical appendix")[0]
         self.assertIn("percentage points", body)
         self.assertTrue(
             re.search(r"between [\d.]+ and [\d.]+ percentage points", body)
@@ -77,23 +88,23 @@ class TestEditorialRules(unittest.TestCase):
         )
 
     def test_avoids_unqualified_statistical_jargon_in_the_body(self):
-        body = self.markdown.split("## 7. Technical appendix")[0].lower()
+        body = self.markdown.split("## 9. Technical appendix")[0].lower()
         for term in ("p-value", "p value", "null hypothesis", "alpha", "z-test"):
             self.assertNotIn(term, body, f"{term!r} belongs in the appendix")
 
     def test_jargon_is_allowed_in_the_appendix(self):
-        appendix = self.markdown.split("## 7. Technical appendix")[1]
+        appendix = self.markdown.split("## 9. Technical appendix")[1]
         self.assertIn("p-value", appendix)
 
     def test_explains_the_practical_bar_that_was_set(self):
         self.assertIn("worth acting on", self.markdown)
 
     def test_always_states_limits(self):
-        limits = self.markdown.split("## 5. Limits of this evidence")[1]
+        limits = self.markdown.split("## 7. Limits of this evidence")[1]
         self.assertIn("does not establish", limits)
 
     def test_names_the_methods_used(self):
-        appendix = self.markdown.split("## 7. Technical appendix")[1]
+        appendix = self.markdown.split("## 9. Technical appendix")[1]
         self.assertIn("Wilson", appendix)
         self.assertIn("Newcombe", appendix)
 
@@ -104,24 +115,24 @@ class TestDecisionSpecificContent(unittest.TestCase):
         self.assertIs(result.decision, Decision.ROLLBACK)
         self.assertIn("Stop and revert", markdown)
         self.assertIn("**BREACHED**", markdown)
-        steps = markdown.split("## 6. Suggested next steps")[1]
+        steps = markdown.split("## 8. Suggested next steps")[1]
         self.assertIn("Revert the tested version now", steps)
 
     def test_promote_report_recommends_rollout_and_publication(self):
         _, markdown = report_for((1200, 100, 2000), (1500, 100, 2000))
-        steps = markdown.split("## 6. Suggested next steps")[1]
+        steps = markdown.split("## 8. Suggested next steps")[1]
         self.assertIn("Roll the tested version out", steps)
         self.assertIn("other jurisdictions", steps)
 
     def test_inconclusive_report_says_do_not_act(self):
         result, markdown = report_for((25, 2, 40), (28, 2, 40))
         self.assertIs(result.decision, Decision.INCONCLUSIVE)
-        steps = markdown.split("## 6. Suggested next steps")[1]
+        steps = markdown.split("## 8. Suggested next steps")[1]
         self.assertIn("Do not act on this result", steps)
 
     def test_negative_result_is_framed_as_reusable_evidence(self):
         _, markdown = report_for((6200, 500, 10000), (6200, 500, 10000))
-        steps = markdown.split("## 6. Suggested next steps")[1]
+        steps = markdown.split("## 8. Suggested next steps")[1]
         self.assertIn("Document the negative result", steps)
 
     def test_uncertainty_wording_reflects_an_interval_spanning_zero(self):

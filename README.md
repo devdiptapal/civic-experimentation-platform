@@ -39,7 +39,23 @@ platform recommends reverting the change anyway, because blocking errors
 rose past the tolerance the agency set before launch. Harm outranks benefit,
 and the rule was fixed in writing before anyone saw the data.
 
+Or this, from the same configuration:
+
+```
+Decision: PROMOTE — Adopt the tested version
+completion_rate: 61.7% -> 68.6% (+7.0 percentage points, CI +5.0 to +9.0)
+equity: The change helped overall but showed no measurable benefit for
+        preferred_language=es. It did not harm them; it did not reach them.
+```
+
+The checklist was never translated, so the gain went to English-preference
+applicants only. Every headline number says ship it. Reporting the average
+alone would have widened an access gap and called it a success.
+
 ---
+
+**New here? → [QUICKSTART.md](QUICKSTART.md)** — fifteen minutes, start to
+finish, no real data.
 
 ## Try it in thirty seconds
 
@@ -57,18 +73,22 @@ outcome events for 12,000 applicants, analyzes two scenarios, writes the
 plain-language readouts, and demonstrates that editing the audit log is
 detectable.
 
-To run the test suite (250 tests, still no dependencies):
+To run the test suite (329 tests, still no dependencies):
 
 ```bash
 make test
 ```
 
-To install the command-line tool:
+To install the command-line tool and plan your own evaluation:
 
 ```bash
 pip install -e .
-civicexp --help
+civicexp init
 ```
+
+`init` asks nine plain-language questions and writes a complete, valid
+configuration — including telling you, before you commit to anything,
+whether your traffic can detect the improvement you say you care about.
 
 ## What it does
 
@@ -110,7 +130,51 @@ uncertainty; statistical jargon is confined to a technical appendix.
 
 [See a full example readout →](examples/sf-hsa-document-upload/readout-scenario-b.md)
 
-### 5. Approve, pause, or end the evaluation
+A separate, shorter **case summary** is generated for publication, so
+another agency facing the same problem can act on your evidence instead of
+repeating the pilot:
+
+```bash
+civicexp case-summary experiment.json events.jsonl --jurisdiction "Example County"
+```
+
+### 5. Check whether anyone was left behind
+
+An overall improvement can hide a group the change made worse. Groups are
+declared **before** launch — searching for one afterwards always finds
+something — and every comparison is corrected for the number of groups
+examined.
+
+```
+$ civicexp equity experiment.json events.jsonl
+
+  preferred_language=en  HELPED     n=5,062/4,999
+  preferred_language=es  NO_EFFECT  n=1,506/1,452
+  device_type=mobile     HELPED     n=4,025/4,068
+```
+
+A confirmed harm to any group escalates the recommendation to rollback,
+whatever the average did.
+
+### 6. Decide whether the results can be trusted at all
+
+```
+$ civicexp doctor experiment.json events.jsonl
+
+  [INVALID] sample_ratio
+            Sample ratio mismatch: the observed split does not match the
+            configured one (p = 2.31e-09).
+            Units were lost, duplicated, or routed incorrectly...
+```
+
+Three checks run before any result is reported: **sample ratio mismatch**
+(the split did not happen as configured, so something is broken),
+**completeness** (the measurements actually arrived), and **novelty** (the
+effect faded over the pilot, suggesting people responded to the change
+being new). A failed trust check blocks the decision entirely rather than
+appearing as a footnote.
+
+### 7. Approve, pause, or end the evaluation
 
 An explicit state machine with a tamper-evident, hash-chained audit trail.
 Nothing collects data without five recorded sign-offs. Pausing is always
@@ -184,6 +248,8 @@ is the most common way an evaluation becomes unfalsifiable.
 | [Statistical Methods](docs/Statistical-Methods.md) | Every method, its alternative, and why this one — including what the platform deliberately does not do |
 | [Threat Model](docs/Threat-Model.md) | What is defended against, what is not, and what an agency must add before production |
 | [Standards Alignment](docs/Standards-Alignment.md) | Mapping to the Evidence Act, 21st Century IDEA, GPRA Modernization, PIIA, and the OPEN Government Data Act |
+| [Quickstart](QUICKSTART.md) | Fifteen minutes from clone to a finished report |
+| [Integration Guide](docs/Integration-Guide.md) | Wiring it into a live service — about twenty lines, plus the parts that bite |
 | [Pilot Deployment Guide](docs/Pilot-Deployment-Guide.md) | Step-by-step for an agency team planning a first pilot |
 | [Evaluation Template](docs/Evaluation-Template.md) | The pre-launch evaluation plan |
 | [Experiment Approval Checklist](docs/Experiment-Approval-Checklist.md) | Pre-launch review across program, privacy, legal, and operations |
@@ -201,25 +267,28 @@ step of a benefits application.
 Two scenarios run from the same configuration and the same random seed,
 differing only in the underlying blocking-error rate:
 
-| | Completion | Blocking errors | Decision |
+| | Completion | What else happened | Decision |
 | --- | --- | --- | --- |
-| [Scenario A](examples/sf-hsa-document-upload/readout-scenario-a.md) | 62.3% → 69.6% | unchanged | **PROMOTE** |
-| [Scenario B](examples/sf-hsa-document-upload/readout-scenario-b.md) | 62.3% → 69.6% | +4.5 points | **ROLLBACK** |
+| [Scenario A](examples/sf-hsa-document-upload/readout-scenario-a.md) | +7.0 points | nothing | **PROMOTE** |
+| [Scenario B](examples/sf-hsa-document-upload/readout-scenario-b.md) | +7.0 points | blocking errors +4.5 points | **ROLLBACK** |
+| [Scenario C](examples/sf-hsa-document-upload/readout-scenario-c.md) | +7.0 points | no benefit for Spanish speakers | **PROMOTE**, with the gap named |
 
-Scenario B is the reason the project exists. A platform that reported only
-the primary metric would have recommended shipping a change that was quietly
-failing more applicants.
+Scenarios B and C are the reason the project exists. A platform that
+reported only the primary metric would have shipped a change that was
+quietly failing more applicants in B, and in C would have reported a clean
+win while the benefit reached only part of the population.
 
 Everything in that folder is regenerated by `make example`, and CI fails if
 the committed artifacts drift from what the code produces.
 
 ## Status and scope
 
-**v0.2.0 — working reference implementation.**
+**v0.3.0 — working reference implementation.**
 
-**What is here:** a runnable platform with all five components, 250 tests,
-CI across Python 3.10–3.13 on Linux, macOS, and Windows, a complete worked
-example on synthetic data, and the governance documentation.
+**What is here:** a runnable platform with all seven components, 329 tests,
+CI across Python 3.10–3.13 on Linux, macOS, and Windows, a guided setup
+wizard, three workflow templates, a complete worked example on synthetic
+data, and the governance documentation.
 
 **What is not here:** live integrations with any agency system, any real
 user data, production hardening, or an operational deployment. This is a

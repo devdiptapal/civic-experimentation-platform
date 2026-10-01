@@ -1,0 +1,74 @@
+{
+  "_template": {
+    "title": "Digital intake form",
+    "summary": "Test a change to an initial request or screening form.",
+    "good_for": "Drop-off partway through a form, confusing questions, incomplete submissions.",
+    "typical_change": "Reordering steps, splitting a long page, or rewriting a question."
+  },
+  "experiment": {
+    "id": "exp-digital-intake-001",
+    "name": "Digital intake: clearer first step",
+    "status": "draft",
+    "owner_team": "FILL IN: which team owns this form",
+    "description": "FILL IN: the current form flow, the change, and why. State that no eligibility question or required field changes, only presentation."
+  },
+  "scope": {
+    "service_area": "digital-intake / initial request form",
+    "jurisdictions": ["FILL IN"],
+    "channels": ["web"]
+  },
+  "hypothesis": {
+    "statement": "FILL IN: If the form <changes how>, more people will finish it, without more of them submitting incomplete information."
+  },
+  "assignment": {
+    "salt": "GENERATE WITH: civicexp salt",
+    "control_variant": "control",
+    "enrolled_fraction": 1.0
+  },
+  "variants": {
+    "control": { "description": "Current intake form", "traffic_share": 0.5 },
+    "treatment": { "description": "FILL IN: the changed form", "traffic_share": 0.5 }
+  },
+  "eligibility": {
+    "include": [
+      { "field": "channel", "operator": "eq", "value": "web" },
+      { "field": "application_type", "operator": "eq", "value": "new" }
+    ],
+    "exclude": [
+      { "field": "staff_assisted", "operator": "eq", "value": true }
+    ]
+  },
+  "metrics": {
+    "primary": { "use": "completion_rate", "minimum_effect_of_interest": 0.03 },
+    "guardrails": [
+      { "use": "first_time_success_rate", "max_tolerated_increase": 0.03 },
+      { "use": "support_contact_rate", "max_tolerated_increase": 0.02 },
+      { "use": "time_to_complete", "max_tolerated_increase": 90.0 }
+    ]
+  },
+  "segments": ["preferred_language", "device_type"],
+  "sample_size": {
+    "baseline_rate": 0.55,
+    "expected_units_per_group": 5000,
+    "planned_duration_days": 28
+  },
+  "analysis": {
+    "confidence": 0.95,
+    "power": 0.8,
+    "planned_looks": 4,
+    "require_practical_significance": true
+  },
+  "data_governance": {
+    "pii_default": "none",
+    "approved_pii_fields": [],
+    "retention_days": 90,
+    "suppression_threshold": 11,
+    "allow_row_level_export": false,
+    "reporting_level": "aggregated"
+  },
+  "operations": {
+    "launch_checklist_required": true,
+    "monitoring_cadence": "daily",
+    "rollback_owner_role": "operations_lead"
+  }
+}

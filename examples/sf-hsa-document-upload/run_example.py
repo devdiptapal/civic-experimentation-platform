@@ -51,16 +51,36 @@ ELIGIBLE = {
     "manual_review_flag": False,
 }
 
+# Coded, non-identifying attributes recorded at assignment time. These are
+# what the equity review groups by.
+SEGMENT_MIX = {
+    "preferred_language": {"en": 0.72, "es": 0.21, "zh": 0.07},
+    "device_type": {"mobile": 0.58, "desktop": 0.42},
+}
+
+TREATMENT = "plain_language_checklist"
+
 SCENARIOS = {
     "a": {
         "label": "Scenario A: the change works",
         "treatment_error": 0.048,
-        "note": "Blocking errors are unchanged.",
+        "overrides": {},
+        "note": "Blocking errors are unchanged and every group benefits.",
     },
     "b": {
         "label": "Scenario B: the change works, but causes harm",
         "treatment_error": 0.095,
+        "overrides": {},
         "note": "Blocking errors nearly double.",
+    },
+    "c": {
+        "label": "Scenario C: the change works on average, for some people",
+        "treatment_error": 0.048,
+        # The checklist was written in English. The translated flow still
+        # shows the old paragraph, so Spanish-preference applicants see no
+        # benefit at all -- and the aggregate still looks like a clear win.
+        "overrides": {"preferred_language=es": {"control": 0.62, TREATMENT: 0.62}},
+        "note": "The English flow improves; the Spanish flow is untouched.",
     },
 }
 
@@ -151,26 +171,28 @@ def main() -> int:
         # Components 1 and 2: assign eligible units, record their outcomes.
         spec = SimulationSpec(
             unit_attributes=ELIGIBLE,
-            completion_rate={"control": 0.62, "plain_language_checklist": 0.70},
-            error_rate={
-                "control": 0.05,
-                "plain_language_checklist": scenario["treatment_error"],
-            },
-            support_rate={"control": 0.06, "plain_language_checklist": 0.06},
-            median_seconds={"control": 300.0, "plain_language_checklist": 285.0},
-            units=12000,
+            segment_distribution=SEGMENT_MIX,
+            completion_rate={"control": 0.62, TREATMENT: 0.70},
+            error_rate={"control": 0.05, TREATMENT: scenario["treatment_error"]},
+            support_rate={"control": 0.06, TREATMENT: 0.06},
+            median_seconds={"control": 300.0, TREATMENT: 285.0},
+            completion_overrides=scenario["overrides"],
+            units=14000,
             seed=20260904,
         )
         log = simulate_pilot(config, spec, path=str(events_path))
-        print(f"Recorded {len(log):,} outcome events for 12,000 synthetic applicants.")
+        print(f"Recorded {len(log):,} outcome events for 14,000 synthetic applicants.")
 
         # Component 3: compare the versions and apply the pre-registered rule.
         result = analyze(config, log)
         results[key] = result
         print()
         print(render_text_summary(result))
+        for diagnostic in result.diagnostics:
+            print(f"  [{diagnostic.severity.value:>8}] {diagnostic.name}: {diagnostic.summary}")
         for guardrail in result.guardrails:
             print(f"  [{guardrail.status:>8}] {guardrail.name}: {guardrail.note}")
+        print(f"  equity: {result.equity.summary_line()}")
 
     banner("Closing the evaluation")
     # The decision rule, not the operator's preference, ends the pilot.
@@ -222,15 +244,20 @@ def main() -> int:
     print(f"  {tampered.message}")
     scratch.unlink()
 
-    summary = (
-        f"Scenario A -> {results['a'].decision.value.upper()}, "
-        f"Scenario B -> {results['b'].decision.value.upper()}"
+    summary = " | ".join(
+        f"{key.upper()} -> {result.decision.value.upper()}"
+        for key, result in results.items()
     )
     banner(summary)
     print(
-        "Same configuration, same measured improvement in completion. The only\n"
-        "difference is that scenario B also made blocking errors worse, and the\n"
-        "pre-registered rule caught it."
+        "One configuration, three scenarios, three different answers.\n\n"
+        "A and B measure the same improvement in completion. B is rolled back\n"
+        "because blocking errors breached the agreed tolerance.\n\n"
+        "C is the one most tools would get wrong. Completion rises, no guardrail\n"
+        "moves, and every headline number says ship it -- but the benefit reaches\n"
+        "English-preference applicants only, because the checklist was never\n"
+        "translated. Reporting only the average would have widened an access gap\n"
+        "and called it a success."
     )
     return 0
 
