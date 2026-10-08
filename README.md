@@ -77,7 +77,7 @@ outcome events for 12,000 applicants, analyzes two scenarios, writes the
 plain-language readouts, and demonstrates that editing the audit log is
 detectable.
 
-To run the test suite (329 tests, still no dependencies):
+To run the test suite (430 tests, still no dependencies):
 
 ```bash
 make test
@@ -289,9 +289,9 @@ the committed artifacts drift from what the code produces.
 
 **v0.4.0 — hosted platform: web app, collection API, monitoring, evidence library.**
 
-**What is here:** a runnable platform with all seven components, 329 tests,
+**What is here:** a runnable platform with all five components, 430 tests,
 CI across Python 3.10–3.13 on Linux, macOS, and Windows, a guided setup
-wizard, three workflow templates, a complete worked example on synthetic
+wizard, six workflow templates, a complete worked example on synthetic
 data, and the governance documentation.
 
 **What is not here:** live integrations with any agency system, any real
