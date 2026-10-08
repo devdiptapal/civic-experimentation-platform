@@ -64,6 +64,9 @@ def parse_timestamp(value: str) -> datetime:
     transition, or an agency operating across time zones, will otherwise
     produce duration metrics that are silently wrong by an hour.
     """
+    if isinstance(value, str) and value.endswith(("Z", "z")):
+        # Python 3.10 does not read the "Z" suffix for UTC; 3.11 and later do.
+        value = value[:-1] + "+00:00"
     try:
         parsed = datetime.fromisoformat(value)
     except (TypeError, ValueError) as exc:

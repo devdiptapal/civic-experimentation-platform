@@ -228,10 +228,19 @@ class ImportReport:
         return counts
 
 
+def _iso(text: str) -> str:
+    """ISO text that Python 3.10's ``fromisoformat`` accepts."""
+    if "T" not in text:
+        text = text.replace(" ", "T", 1)
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
+    return text
+
+
 def _timestamp(value: str, zone: Any) -> datetime:
     text = value.strip()
     try:
-        parsed = datetime.fromisoformat(text.replace(" ", "T", 1) if "T" not in text else text)
+        parsed = datetime.fromisoformat(_iso(text))
     except ValueError as exc:
         raise EventError(
             f"{value!r} is not a date and time this tool can read; use ISO-8601, for "
@@ -329,7 +338,7 @@ def profile_columns(
 
 def _looks_like_time(value: str) -> bool:
     try:
-        datetime.fromisoformat(value.replace(" ", "T", 1) if "T" not in value else value)
+        datetime.fromisoformat(_iso(value))
     except ValueError:
         return False
     return True
