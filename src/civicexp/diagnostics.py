@@ -472,9 +472,9 @@ def _split_counts(log, metric, control: str, treatment: str):
             if key not in entered or event.timestamp < entered[key][1]:
                 entered[key] = (event.variant, event.timestamp)
 
-    converted = {
-        e.unit_pseudonym for e in log if e.event_type == metric.numerator_event
-    }
+    converted = log.units_meeting(
+        metric.numerator_event, excluding=metric.numerator_excludes
+    )
 
     tallies = {
         half: {arm: [0, 0] for arm in (control, treatment)} for half in ("early", "late")

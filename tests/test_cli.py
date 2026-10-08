@@ -288,7 +288,9 @@ class TestInitAndCatalogues(CLITestCase):
     def test_templates_lists_every_workflow(self):
         code, out, _ = run("templates")
         self.assertEqual(code, EXIT_OK)
-        for name in ("document-upload", "appointment-reminder", "digital-intake"):
+        for name in ("document-upload", "appointment-reminder", "digital-intake",
+                     "eligibility-screener", "renewal-reminder",
+                     "missing-information-notice"):
             self.assertIn(name, out)
 
     def test_metrics_lists_the_library(self):

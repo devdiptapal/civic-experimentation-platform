@@ -7,6 +7,43 @@ change interfaces. Changes that affect **comparability of published results**
 are called out explicitly, because they matter more than API breakage for a
 project whose purpose is reusable evidence.
 
+## v0.4.0 — The hosted platform
+
+### Added
+- **Web application and API** (`civicexp serve`), standard library only:
+  accounts holding the five reviewer roles, sign-offs bound to the exact plan
+  version, an alert inbox, sealed results with recorded interim looks,
+  decisions frozen into a readout and case record, and administration.
+- **Collection service** for live services: enrolls each person once, keeps
+  only declared equity attributes, refuses outcomes for unenrolled people or
+  the wrong version, and serves the current version whenever the pilot is not
+  approved to collect. JavaScript client that fails open.
+- **Workspace** layout with the audit trail as the source of truth for state
+  (`ExperimentLifecycle.from_audit`); a tampered trail halts collection.
+- **Monitoring** (`civicexp monitor`, chat webhooks), **retention
+  enforcement** (`civicexp retention`), **evidence library** with a versioned
+  case-record schema, **spreadsheet mode** (`assign-batch`, `import-csv`),
+  and a populated synthetic **demo** (`civicexp demo`).
+- Three workflow templates: eligibility screener, renewal reminder,
+  missing-information notice. Events `submission_returned` and
+  `processing_completed`; standard metrics `returned_for_information_rate`
+  and `time_to_process`. Config validation rejects unknown event names.
+- Dockerfile; docs/Product-Guide.md.
+
+### Fixed — affects comparability
+- `abandonment_rate` counted people who viewed a step; it now counts people
+  who entered and never submitted (`numerator_excludes`).
+- `first_time_success_rate` now excludes anyone with a failed attempt.
+- Guardrails whose metric is better when higher (e.g. first-time success)
+  were breached by improvement; guardrails now honor `target_direction`.
+- For lower-is-better primary metrics, the equity review read benefit as
+  harm and the readout called a worse result "better". Both fixed.
+- A group helped by a margin that survives correction is reported as
+  helped, not "not reached", even when below the service-wide bar.
+- Templates are now declared package data, so a regular install includes them.
+
+The committed worked example is unchanged byte for byte.
+
 ## v0.3.0 — Trust checks, equity review, and a guided setup
 
 Three themes: results you can trust, results that account for everyone, and

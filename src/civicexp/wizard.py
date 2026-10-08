@@ -29,18 +29,30 @@ from __future__ import annotations
 import json
 import secrets
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from .metrics import STANDARD_METRICS
 from .stats import minimum_detectable_effect, required_sample_size_per_group
 
-__all__ = ["TEMPLATES", "load_template", "list_templates", "run_wizard"]
+__all__ = [
+    "TEMPLATES",
+    "PowerAssessment",
+    "assess_power",
+    "build_config",
+    "load_template",
+    "list_templates",
+    "run_wizard",
+]
 
 TEMPLATES: Mapping[str, str] = {
     "document-upload": "document_upload.json",
     "appointment-reminder": "appointment_reminder.json",
     "digital-intake": "digital_intake.json",
+    "eligibility-screener": "eligibility_screener.json",
+    "renewal-reminder": "renewal_reminder.json",
+    "missing-information-notice": "missing_information_notice.json",
 }
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -348,3 +360,133 @@ def _slug(name: str) -> str:
     while "--" in cleaned:
         cleaned = cleaned.replace("--", "-")
     return f"exp-{cleaned.strip('-')[:40]}"
+
+
+# ---------------------------------------------------------------------------
+# The same interview, as a function
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PowerAssessment:
+    """Whether a planned pilot can detect the effect the program cares about."""
+
+    per_group: int
+    detectable: float
+    wanted: float
+    adequate: bool
+    needed_per_group: int
+    days_needed: int
+
+    def message(self, duration_days: int) -> str:
+        if self.per_group < 1:
+            return "Not enough volume to evaluate this workflow at all."
+        if self.adequate:
+            return (
+                f"About {self.per_group:,} people per group over {duration_days} days "
+                f"can detect a change of about {self.detectable:.1%}, and the program "
+                f"cares about {self.wanted:.1%}. That works."
+            )
+        return (
+            f"Too small to answer the question: about {self.per_group:,} people per "
+            f"group can only reliably detect a change of {self.detectable:.1%}, but the "
+            f"program cares about {self.wanted:.1%}. Run for about "
+            f"{self.days_needed} days instead, widen eligibility "
+            f"({self.needed_per_group * 2:,} people in total are needed), or test a "
+            "bolder change."
+        )
+
+
+def assess_power(
+    baseline: float,
+    effect: float,
+    monthly_volume: float,
+    duration_days: float,
+    *,
+    looks: int = 4,
+) -> PowerAssessment:
+    """The power check the interview runs live, for any front end."""
+    per_group = int(monthly_volume * (duration_days / 30.0) / 2)
+    if per_group < 1:
+        return PowerAssessment(0, 1.0, effect, False, 0, 0)
+    detectable = minimum_detectable_effect(baseline, per_group, looks=looks)
+    needed = required_sample_size_per_group(baseline, effect, looks=looks)
+    days_needed = int(needed * 2 / (monthly_volume / 30.0)) if monthly_volume else 0
+    return PowerAssessment(
+        per_group, detectable, effect, detectable <= effect, needed, days_needed
+    )
+
+
+#: Answers :func:`build_config` requires, and the question each one answers.
+REQUIRED_ANSWERS: Mapping[str, str] = {
+    "name": "What would you call this evaluation?",
+    "description": "What is changing?",
+    "baseline_rate": "Out of everyone who starts, what share finishes today?",
+    "minimum_effect": "How big an improvement would be worth making this permanent?",
+    "monthly_volume": "How many people go through this workflow each month?",
+}
+
+
+def build_config(
+    template_name: str, answers: Mapping[str, Any]
+) -> tuple[dict[str, Any], PowerAssessment]:
+    """Build a configuration from interview answers, without prompting.
+
+    The web form and :func:`run_wizard` produce the same configuration from
+    the same answers. Like the interview, this never invents the effect of
+    interest: a missing or non-positive ``minimum_effect`` is an error.
+    """
+    missing = [key for key in REQUIRED_ANSWERS if answers.get(key) in (None, "")]
+    if missing:
+        raise ValueError(
+            "missing answers: "
+            + "; ".join(f"{REQUIRED_ANSWERS[k]} ({k})" for k in missing)
+        )
+    baseline = float(answers["baseline_rate"])
+    effect = float(answers["minimum_effect"])
+    if not 0 < baseline < 1:
+        raise ValueError("baseline_rate must be a proportion between 0 and 1")
+    if not 0 < effect < 1:
+        raise ValueError(
+            "minimum_effect must be a positive proportion, for example 0.03 for "
+            "three percentage points"
+        )
+    monthly = float(answers["monthly_volume"])
+    duration = int(answers.get("duration_days") or 28)
+    if monthly <= 0 or duration <= 0:
+        raise ValueError("monthly_volume and duration_days must be positive")
+
+    config = load_template(template_name)
+    config.pop("_template", None)
+    name = str(answers["name"]).strip()
+    config["experiment"]["name"] = name
+    config["experiment"]["id"] = str(answers.get("experiment_id") or _slug(name))
+    config["experiment"]["description"] = str(answers["description"]).strip()
+    config["experiment"]["owner_team"] = str(
+        answers.get("owner_team") or "digital-services"
+    ).strip()
+    config["scope"]["jurisdictions"] = [
+        str(answers.get("jurisdiction") or "our-agency").strip()
+    ]
+    config["scope"]["workflow"] = template_name
+    if answers.get("hypothesis"):
+        config["hypothesis"]["statement"] = str(answers["hypothesis"]).strip()
+    if answers.get("treatment_description"):
+        treatment = next(
+            v for k, v in config["variants"].items()
+            if k != config["assignment"]["control_variant"]
+        )
+        treatment["description"] = str(answers["treatment_description"]).strip()
+    if answers.get("segments") is not None:
+        segments = answers["segments"]
+        if isinstance(segments, str):
+            segments = [part.strip() for part in segments.split(",")]
+        config["segments"] = [s for s in segments if s]
+
+    config["sample_size"]["baseline_rate"] = round(baseline, 4)
+    config["metrics"]["primary"]["minimum_effect_of_interest"] = round(effect, 4)
+    assessment = assess_power(baseline, effect, monthly, duration)
+    config["sample_size"]["expected_units_per_group"] = max(assessment.per_group, 1)
+    config["sample_size"]["planned_duration_days"] = duration
+    config["assignment"]["salt"] = secrets.token_hex(16)
+    return config, assessment

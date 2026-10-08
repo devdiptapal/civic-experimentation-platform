@@ -180,11 +180,24 @@ class AnalysisResult:
 
 
 def _proportion_counts(
-    log: EventLog, numerator_event: str, denominator_event: str, variant: str
+    log: EventLog,
+    numerator_event: str,
+    denominator_event: str,
+    variant: str,
+    excludes: tuple[str, ...] = (),
 ) -> tuple[int, int]:
-    numerators = log.count_units_with_event(numerator_event)
+    numerators = log.count_units_meeting(numerator_event, excluding=excludes)
     denominators = log.count_units_with_event(denominator_event)
     return numerators.get(variant, 0), denominators.get(variant, 0)
+
+
+def _oriented(
+    change: float, low: float, high: float, target_direction: str
+) -> tuple[float, float, float]:
+    """A change and its interval, signed so that positive means worse."""
+    if target_direction == "decrease":
+        return change, low, high
+    return -change, -high, -low
 
 
 def _evaluate_guardrail(
@@ -198,10 +211,18 @@ def _evaluate_guardrail(
     """Evaluate one guardrail; returns the result and its p-value if testable."""
     if spec.kind == "proportion":
         c_num, c_den = _proportion_counts(
-            log, spec.numerator_event, spec.denominator_event, control
+            log,
+            spec.numerator_event,
+            spec.denominator_event,
+            control,
+            spec.numerator_excludes,
         )
         t_num, t_den = _proportion_counts(
-            log, spec.numerator_event, spec.denominator_event, treatment
+            log,
+            spec.numerator_event,
+            spec.denominator_event,
+            treatment,
+            spec.numerator_excludes,
         )
         if c_den == 0 or t_den == 0:
             return (
@@ -225,23 +246,29 @@ def _evaluate_guardrail(
             c_num, c_den, t_num, t_den, confidence=confidence, looks=looks
         )
         low, high = comparison.difference_interval
-        worsened_beyond_tolerance = low > spec.max_tolerated_increase
+        # Orient the change so that positive always means "worse". For an
+        # error rate that is the change itself; for a success rate it is
+        # the change reversed.
+        harm, harm_low, harm_high = _oriented(
+            comparison.absolute_difference, low, high, spec.target_direction
+        )
+        worsened_beyond_tolerance = harm_low > spec.max_tolerated_increase
         watch = (
             not worsened_beyond_tolerance
-            and high > spec.max_tolerated_increase
-            and comparison.absolute_difference > 0
+            and harm_high > spec.max_tolerated_increase
+            and harm > 0
         )
         if worsened_beyond_tolerance:
             note = (
-                f"Worsened by {comparison.absolute_difference * 100:.1f} percentage "
-                f"points (95% CI {low * 100:.1f} to {high * 100:.1f}), and the whole "
-                f"interval exceeds the {spec.max_tolerated_increase * 100:.1f} point "
+                f"Worsened by {harm * 100:.1f} percentage "
+                f"points (95% CI {harm_low * 100:.1f} to {harm_high * 100:.1f}), and the "
+                f"whole interval exceeds the {spec.max_tolerated_increase * 100:.1f} point "
                 "tolerance."
             )
         elif watch:
             note = (
-                f"Point estimate worsened by {comparison.absolute_difference * 100:.1f} "
-                f"percentage points, and the interval reaches {high * 100:.1f}, above "
+                f"Point estimate worsened by {harm * 100:.1f} "
+                f"percentage points, and the interval reaches {harm_high * 100:.1f}, above "
                 f"the {spec.max_tolerated_increase * 100:.1f} point tolerance. Not a "
                 "confirmed breach, but it warrants monitoring."
             )
@@ -290,8 +317,11 @@ def _evaluate_guardrail(
         control_values, treatment_values, confidence=confidence, looks=looks
     )
     low, high = comparison.difference_interval
-    breached = low > spec.max_tolerated_increase
-    watch = not breached and high > spec.max_tolerated_increase and comparison.difference > 0
+    harm, harm_low, harm_high = _oriented(
+        comparison.difference, low, high, spec.target_direction
+    )
+    breached = harm_low > spec.max_tolerated_increase
+    watch = not breached and harm_high > spec.max_tolerated_increase and harm > 0
     note = (
         f"Change of {comparison.difference:+.1f} seconds "
         f"(95% CI {low:.1f} to {high:.1f}) against a tolerance of "
@@ -317,8 +347,15 @@ def analyze(
     log: EventLog,
     *,
     treatment_variant: str | None = None,
+    looks_taken: int | None = None,
 ) -> AnalysisResult:
-    """Compare one treatment arm against control and apply the decision rule."""
+    """Compare one treatment arm against control and apply the decision rule.
+
+    ``looks_taken`` is how many times the results have been examined,
+    counting this one. The significance threshold is tightened for the
+    number of looks the plan declared; if more were taken than planned, the
+    stated error rate no longer holds, and the result says so.
+    """
     control = config.control_variant
     candidates = config.treatment_variants
     if treatment_variant is None:
@@ -348,10 +385,18 @@ def analyze(
         )
 
     c_num, c_den = _proportion_counts(
-        log, metric.numerator_event, metric.denominator_event, control
+        log,
+        metric.numerator_event,
+        metric.denominator_event,
+        control,
+        metric.numerator_excludes,
     )
     t_num, t_den = _proportion_counts(
-        log, metric.numerator_event, metric.denominator_event, treatment_variant
+        log,
+        metric.numerator_event,
+        metric.denominator_event,
+        treatment_variant,
+        metric.numerator_excludes,
     )
     if c_den == 0 or t_den == 0:
         raise AnalysisError(
@@ -364,6 +409,14 @@ def analyze(
         c_num, c_den, t_num, t_den, confidence=confidence, looks=looks
     )
     warnings.extend(primary.warnings)
+    if looks_taken is not None and looks_taken > looks:
+        warnings.append(
+            f"These results were examined {looks_taken} times, but the plan "
+            f"declared {looks} look(s) and the significance threshold was "
+            "tightened for that number only. Each extra look adds another "
+            "chance of a false positive, so the confidence stated here is "
+            "overstated."
+        )
 
     # Trust checks, and the pre-registered equity review. Both run before the
     # decision rule, because a result from a broken pilot should never reach

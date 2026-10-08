@@ -22,6 +22,7 @@ a package requires its own review.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from collections.abc import Mapping
@@ -31,6 +32,7 @@ from typing import Any
 
 from .eligibility import EligibilityCriteria
 from .errors import ConfigError
+from .events import EVENT_TYPES
 from .metrics import expand_metric
 from .privacy import DEFAULT_SUPPRESSION_THRESHOLD, PrivacyPolicy
 from .stats import minimum_detectable_effect, required_sample_size_per_group
@@ -40,11 +42,60 @@ __all__ = [
     "GuardrailSpec",
     "DecisionRule",
     "ExperimentConfig",
+    "config_fingerprint",
     "load_config",
 ]
 
 _DIRECTIONS = ("increase", "decrease")
 _METRIC_KINDS = ("proportion", "duration")
+
+
+def config_fingerprint(raw: Mapping[str, Any]) -> str:
+    """SHA-256 of a configuration's canonical JSON form.
+
+    Reviewers sign off on a specific plan. Recording this digest with each
+    sign-off is what lets the platform notice when the plan running is not
+    the plan that was approved -- key order and whitespace do not change
+    it; any change to a value does.
+    """
+    canonical = json.dumps(
+        raw, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _check_events(
+    where: str, data: Mapping[str, Any], keys: tuple[str, ...], errors: list[str]
+) -> tuple[str, ...]:
+    """Confirm every event a metric names exists in the approved taxonomy.
+
+    A misspelled event name would otherwise load cleanly and then measure
+    nothing, which surfaces weeks later as a pilot with no data.
+    Returns the validated ``numerator_excludes``.
+    """
+    for key in keys:
+        value = data.get(key)
+        if value and str(value) not in EVENT_TYPES:
+            errors.append(
+                f"{where}.{key} is {value!r}, which is not in the approved event "
+                f"taxonomy ({', '.join(EVENT_TYPES)})"
+            )
+    raw_excludes = data.get("numerator_excludes") or []
+    if isinstance(raw_excludes, str) or not isinstance(raw_excludes, (list, tuple)):
+        errors.append(f"{where}.numerator_excludes must be a list of event names")
+        return ()
+    excludes = tuple(str(e) for e in raw_excludes)
+    for event in excludes:
+        if event not in EVENT_TYPES:
+            errors.append(
+                f"{where}.numerator_excludes names {event!r}, which is not in the "
+                "approved event taxonomy"
+            )
+    if excludes and str(data.get("kind", "proportion")) == "duration":
+        errors.append(
+            f"{where}.numerator_excludes applies only to proportion metrics"
+        )
+    return excludes
 
 
 @dataclass(frozen=True)
@@ -58,6 +109,9 @@ class MetricSpec:
     numerator_event: str
     denominator_event: str
     minimum_effect_of_interest: float
+    #: Units that produced any of these events do not count toward the
+    #: numerator. See :mod:`civicexp.metrics`.
+    numerator_excludes: tuple[str, ...] = ()
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any], errors: list[str]) -> MetricSpec | None:
@@ -109,6 +163,9 @@ class MetricSpec:
                 "express the desired direction with target_direction"
             )
             return None
+        excludes = _check_events(
+            "metrics.primary", data, ("numerator_event", "denominator_event"), errors
+        )
         return cls(
             name=str(data["name"]),
             definition=str(data["definition"]),
@@ -117,6 +174,7 @@ class MetricSpec:
             numerator_event=str(data["numerator_event"]),
             denominator_event=str(data["denominator_event"]),
             minimum_effect_of_interest=mei,
+            numerator_excludes=excludes,
         )
 
 
@@ -132,6 +190,13 @@ class GuardrailSpec:
     #: Largest tolerable worsening, as an absolute change for proportions or
     #: seconds for durations. Always expressed as a positive number.
     max_tolerated_increase: float
+    numerator_excludes: tuple[str, ...] = ()
+    #: Which way is better for this measure. A guardrail is breached by
+    #: movement the *other* way: an error rate (lower is better) by rising,
+    #: a first-time success rate (higher is better) by falling. Defaults to
+    #: "decrease", which is what every guardrail meant before this field
+    #: existed.
+    target_direction: str = "decrease"
 
     @classmethod
     def from_dict(
@@ -175,6 +240,19 @@ class GuardrailSpec:
                 "non-negative; it describes how much worse the metric may get"
             )
             return None
+        excludes = _check_events(
+            f"metrics.guardrails[{index}]",
+            data,
+            ("numerator_event", "denominator_event"),
+            errors,
+        )
+        direction = str(data.get("target_direction", "decrease"))
+        if direction not in _DIRECTIONS:
+            errors.append(
+                f"metrics.guardrails[{index}].target_direction must be one of "
+                f"{_DIRECTIONS}, got {direction!r}"
+            )
+            return None
         return cls(
             name=str(data["name"]),
             definition=str(data["definition"]),
@@ -182,6 +260,8 @@ class GuardrailSpec:
             numerator_event=str(data["numerator_event"]),
             denominator_event=str(data.get("denominator_event", "")),
             max_tolerated_increase=tolerance,
+            numerator_excludes=excludes,
+            target_direction=direction,
         )
 
 
@@ -244,6 +324,8 @@ class ExperimentConfig:
     expected_units_per_group: int | None = None
     planned_duration_days: int | None = None
     warnings: tuple[str, ...] = field(default_factory=tuple)
+    #: :func:`config_fingerprint` of the configuration this was loaded from.
+    fingerprint: str = ""
 
     @property
     def treatment_variants(self) -> tuple[str, ...]:
@@ -541,6 +623,7 @@ def load_config(source: str | os.PathLike[str] | Mapping[str, Any]) -> Experimen
         expected_units_per_group=expected_units,
         planned_duration_days=duration_days,
         warnings=tuple(warnings),
+        fingerprint=config_fingerprint(raw),
     )
 
     note = config.power_note()

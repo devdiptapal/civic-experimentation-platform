@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "civicexp"
-version = "0.3.0"
+version = "0.4.0"
 description = "Open-source experimentation and evaluation platform for public benefits and digital public services"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -57,6 +57,9 @@ civicexp = "civicexp.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+civicexp = ["templates/*.json", "web/static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

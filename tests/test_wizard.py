@@ -60,9 +60,19 @@ class TestTemplates(unittest.TestCase):
                 self.assertTrue(config.segments)
 
     def test_templates_cover_the_named_workflows(self):
+        # The workflows the project plan names: online forms (intake, upload,
+        # the eligibility questionnaire step) and service communications
+        # (reminders, renewal notices, requests for missing information).
         self.assertEqual(
             set(TEMPLATES),
-            {"document-upload", "appointment-reminder", "digital-intake"},
+            {
+                "document-upload",
+                "appointment-reminder",
+                "digital-intake",
+                "eligibility-screener",
+                "renewal-reminder",
+                "missing-information-notice",
+            },
         )
 
     def test_each_template_describes_itself(self):

@@ -25,10 +25,69 @@ from datetime import datetime, timedelta, timezone
 
 from .assignment import Assigner
 from .config import ExperimentConfig
+from .eligibility import EligibilityCriteria
 from .errors import ConfigError
 from .events import EventLog
 
-__all__ = ["SimulationSpec", "simulate_pilot"]
+__all__ = [
+    "DEFAULT_SEGMENT_MIX",
+    "SimulationSpec",
+    "satisfying_attributes",
+    "segment_mix_for",
+    "simulate_pilot",
+]
+
+#: Plausible coded values for the segments templates suggest, used when a
+#: dry run has to invent a population. Any other declared segment gets two
+#: evenly split placeholder groups.
+DEFAULT_SEGMENT_MIX: Mapping[str, Mapping[str, float]] = {
+    "preferred_language": {"en": 0.72, "es": 0.21, "zh": 0.07},
+    "device_type": {"mobile": 0.58, "desktop": 0.42},
+    "channel": {"sms": 0.6, "email": 0.4},
+    "household_size_band": {"1": 0.4, "2-3": 0.4, "4+": 0.2},
+    "age_band": {"18-34": 0.35, "35-64": 0.45, "65+": 0.2},
+}
+
+
+def satisfying_attributes(criteria: EligibilityCriteria) -> dict[str, object]:
+    """Attributes that pass a set of eligibility rules, for a dry run.
+
+    A dry run needs synthetic people the plan would actually include.
+    Deriving them from the rules means a program manager can preview a
+    readout without first learning the rule language.
+    """
+    attributes: dict[str, object] = {}
+    for rule in criteria.include:
+        if rule.operator == "eq":
+            attributes[rule.field] = rule.value
+        elif rule.operator == "in" and rule.value:
+            attributes[rule.field] = list(rule.value)[0]
+        elif rule.operator in ("gte", "lte"):
+            attributes[rule.field] = rule.value
+        elif rule.operator == "gt":
+            attributes[rule.field] = rule.value + 1
+        elif rule.operator == "lt":
+            attributes[rule.field] = rule.value - 1
+        elif rule.operator in ("ne", "not_in", "exists"):
+            attributes.setdefault(rule.field, "dry-run-value")
+    for rule in criteria.exclude:
+        if rule.field in attributes or rule.operator == "missing":
+            continue
+        if rule.operator == "eq" and isinstance(rule.value, bool):
+            attributes[rule.field] = not rule.value
+    return attributes
+
+
+def segment_mix_for(config: ExperimentConfig, attributes: Mapping[str, object]):
+    """A segment distribution for every segment the plan declares."""
+    mix: dict[str, dict[str, float]] = {}
+    for name in config.segments:
+        if name in attributes:
+            # Also an eligibility field: every included person has this value.
+            mix[name] = {str(attributes[name]): 1.0}
+        else:
+            mix[name] = dict(DEFAULT_SEGMENT_MIX.get(name, {"group_a": 0.5, "group_b": 0.5}))
+    return mix
 
 
 class SimulationSpec:
@@ -50,6 +109,8 @@ class SimulationSpec:
         segment_distribution: Mapping[str, Mapping[str, float]] | None = None,
         completion_overrides: Mapping[str, Mapping[str, float]] | None = None,
         unit_attributes: Mapping[str, object] | None = None,
+        returned_rate: Mapping[str, float] | None = None,
+        median_processing_seconds: Mapping[str, float] | None = None,
         units: int = 2000,
         start: datetime | None = None,
         duration_days: int = 28,
@@ -74,6 +135,11 @@ class SimulationSpec:
         # Applied to every synthetic unit. Must satisfy the config's
         # eligibility criteria, or the simulation produces no enrolled units.
         self.unit_attributes = dict(unit_attributes or {})
+        # Back-office outcomes after a successful submission. Off unless
+        # given, so that simulations written before these existed draw the
+        # same random numbers and reproduce byte for byte.
+        self.returned_rate = dict(returned_rate or {})
+        self.median_processing_seconds = dict(median_processing_seconds or {})
         self.units = units
         self.start = start or datetime(2026, 3, 2, 9, 0, tzinfo=timezone.utc)
         self.duration_days = duration_days
@@ -195,6 +261,25 @@ def simulate_pilot(
                 variant,
                 timestamp=started + timedelta(seconds=elapsed),
             )
+            submitted = started + timedelta(seconds=elapsed)
+            if variant in spec.returned_rate and rng.random() < spec.returned_rate[variant]:
+                log.record(
+                    "submission_returned",
+                    pseudonym,
+                    variant,
+                    timestamp=submitted + timedelta(days=rng.uniform(1, 5)),
+                    reason_code="missing_document",
+                )
+            if variant in spec.median_processing_seconds:
+                processing = spec.median_processing_seconds[variant] * min(
+                    rng.lognormvariate(0.0, 0.5), 8.0
+                )
+                log.record(
+                    "processing_completed",
+                    pseudonym,
+                    variant,
+                    timestamp=submitted + timedelta(seconds=processing),
+                )
 
     if not len(log):
         raise ConfigError(

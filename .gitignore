@@ -21,3 +21,7 @@ htmlcov/
 !examples/**/*.jsonl
 events.jsonl
 readout.md
+
+# Workspaces hold password hashes and pilot data. Never commit them.
+civicexp-workspace/
+demo-workspace/

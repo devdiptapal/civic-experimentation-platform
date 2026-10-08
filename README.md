@@ -54,6 +54,10 @@ alone would have widened an access gap and called it a success.
 
 ---
 
+**Want the product? →** `civicexp demo && civicexp serve --workspace demo-workspace`
+gives a populated web app (synthetic data) with roles, reviews, alerts,
+sealed results, and an evidence library. See [docs/Product-Guide.md](docs/Product-Guide.md).
+
 **New here? → [QUICKSTART.md](QUICKSTART.md)** — fifteen minutes, start to
 finish, no real data.
 
@@ -283,7 +287,7 @@ the committed artifacts drift from what the code produces.
 
 ## Status and scope
 
-**v0.3.0 — working reference implementation.**
+**v0.4.0 — hosted platform: web app, collection API, monitoring, evidence library.**
 
 **What is here:** a runnable platform with all seven components, 329 tests,
 CI across Python 3.10–3.13 on Linux, macOS, and Windows, a guided setup

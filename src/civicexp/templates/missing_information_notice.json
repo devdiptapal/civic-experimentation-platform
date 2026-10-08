@@ -1,0 +1,113 @@
+{
+  "_template": {
+    "title": "Missing-information notice",
+    "summary": "Test the notice sent when an application is missing information or a document.",
+    "good_for": "Applications stalled waiting on the applicant, repeat requests, denials for failure to provide information.",
+    "typical_change": "Saying exactly what is missing and how to send it, in plain language, with one clear deadline."
+  },
+  "experiment": {
+    "id": "exp-missing-information-001",
+    "name": "Missing-information notice: say exactly what is missing",
+    "status": "draft",
+    "owner_team": "FILL IN: which team owns this notice",
+    "description": "FILL IN: the current notice, the changed one, and why. Only the notice changes, not what information is required or the deadline for providing it."
+  },
+  "scope": {
+    "service_area": "case processing / missing-information notices",
+    "jurisdictions": [
+      "FILL IN"
+    ],
+    "channels": [
+      "mail",
+      "email",
+      "sms"
+    ]
+  },
+  "hypothesis": {
+    "statement": "FILL IN: If the notice <changes how>, more applicants will send what is missing, and the agency will finish processing sooner."
+  },
+  "assignment": {
+    "salt": "GENERATE WITH: civicexp salt",
+    "control_variant": "control",
+    "enrolled_fraction": 1.0
+  },
+  "variants": {
+    "control": {
+      "description": "Current missing-information notice",
+      "traffic_share": 0.5
+    },
+    "treatment": {
+      "description": "FILL IN: the changed notice",
+      "traffic_share": 0.5
+    }
+  },
+  "eligibility": {
+    "include": [
+      {
+        "field": "missing_information_notice_due",
+        "operator": "eq",
+        "value": true
+      }
+    ],
+    "exclude": [
+      {
+        "field": "manual_review_flag",
+        "operator": "eq",
+        "value": true
+      }
+    ]
+  },
+  "metrics": {
+    "primary": {
+      "name": "information_provided_rate",
+      "definition": "Share of people sent a missing-information notice who then provided the information successfully, counted once per person.",
+      "kind": "proportion",
+      "numerator_event": "submission_succeeded",
+      "denominator_event": "experiment_assigned",
+      "target_direction": "increase",
+      "minimum_effect_of_interest": 0.04
+    },
+    "guardrails": [
+      {
+        "use": "returned_for_information_rate",
+        "max_tolerated_increase": 0.02
+      },
+      {
+        "use": "support_contact_rate",
+        "max_tolerated_increase": 0.02
+      },
+      {
+        "use": "time_to_process",
+        "max_tolerated_increase": 86400.0
+      }
+    ]
+  },
+  "segments": [
+    "preferred_language",
+    "channel"
+  ],
+  "sample_size": {
+    "baseline_rate": 0.5,
+    "expected_units_per_group": 2500,
+    "planned_duration_days": 42
+  },
+  "analysis": {
+    "confidence": 0.95,
+    "power": 0.8,
+    "planned_looks": 3,
+    "require_practical_significance": true
+  },
+  "data_governance": {
+    "pii_default": "none",
+    "approved_pii_fields": [],
+    "retention_days": 90,
+    "suppression_threshold": 11,
+    "allow_row_level_export": false,
+    "reporting_level": "aggregated"
+  },
+  "operations": {
+    "launch_checklist_required": true,
+    "monitoring_cadence": "weekly",
+    "rollback_owner_role": "operations_lead"
+  }
+}

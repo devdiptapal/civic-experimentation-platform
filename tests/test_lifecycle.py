@@ -343,3 +343,122 @@ class TestLifecycleAuditIntegration(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestReplayFromAudit(unittest.TestCase):
+    """The audit trail is the state: replaying it must reproduce it exactly."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.path = Path(self._tmp.name) / "audit.jsonl"
+
+    def test_replay_reproduces_state_sign_offs_and_looks(self):
+        live = fully_signed(ExperimentLifecycle("exp-1", audit_path=self.path))
+        live.approve("owner")
+        live.start("ops")
+        live.record_look("lead", decision="iterate")
+        live.pause("ops", reason="outage")
+
+        replayed = ExperimentLifecycle.from_audit("exp-1", self.path)
+        self.assertIs(replayed.state, State.PAUSED)
+        self.assertEqual(set(replayed.sign_offs), set(REQUIRED_APPROVALS))
+        self.assertEqual(replayed.interim_looks, 1)
+        self.assertEqual(replayed.started_at, live.started_at)
+        self.assertIsNone(replayed.ended_at)
+
+    def test_replayed_lifecycle_keeps_appending_to_the_same_chain(self):
+        live = fully_signed(ExperimentLifecycle("exp-1", audit_path=self.path))
+        live.approve("owner")
+        replayed = ExperimentLifecycle.from_audit("exp-1", self.path)
+        replayed.start("ops")
+        self.assertTrue(AuditLog(self.path).verify().valid)
+        self.assertIs(ExperimentLifecycle.from_audit("exp-1", self.path).state, State.RUNNING)
+
+    def test_tampered_trail_is_refused(self):
+        fully_signed(ExperimentLifecycle("exp-1", audit_path=self.path)).approve("owner")
+        lines = self.path.read_text().splitlines()
+        lines[1] = lines[1].replace("operations_lead-user", "someone-else")
+        self.path.write_text("\n".join(lines) + "\n")
+        with self.assertRaises(LifecycleError) as ctx:
+            ExperimentLifecycle.from_audit("exp-1", self.path)
+        self.assertEqual(ctx.exception.code, "LIFECYCLE_AUDIT_INVALID")
+
+    def test_internally_inconsistent_trail_is_refused(self):
+        # A correctly hashed chain that records an impossible transition.
+        audit = AuditLog(self.path)
+        audit.append("state:draft->running", "x", experiment_id="exp-1")
+        with self.assertRaises(LifecycleError) as ctx:
+            ExperimentLifecycle.from_audit("exp-1", self.path)
+        self.assertEqual(ctx.exception.code, "LIFECYCLE_AUDIT_INVALID")
+
+    def test_trail_for_another_experiment_is_refused(self):
+        fully_signed(ExperimentLifecycle("exp-other", audit_path=self.path))
+        with self.assertRaises(LifecycleError):
+            ExperimentLifecycle.from_audit("exp-1", self.path)
+
+    def test_annotations_are_kept_but_cannot_forge_transitions(self):
+        lifecycle = ExperimentLifecycle("exp-1", audit_path=self.path)
+        lifecycle.record("config:revised", "lead", config_digest="abc")
+        for forged in ("state:draft->approved", "approval:sign_off", "analysis:x"):
+            with self.assertRaises(LifecycleError) as ctx:
+                lifecycle.record(forged, "lead")
+            self.assertEqual(ctx.exception.code, "LIFECYCLE_RESERVED_ACTION")
+        self.assertIs(ExperimentLifecycle.from_audit("exp-1", self.path).state, State.DRAFT)
+
+
+class TestPlanBinding(unittest.TestCase):
+    """Approval is bound to the plan the reviewers actually read."""
+
+    def test_approval_records_the_plan_fingerprint(self):
+        lifecycle = ExperimentLifecycle("exp-1")
+        for role in REQUIRED_APPROVALS:
+            lifecycle.sign_off(role, role, config_digest="plan-v1")
+        lifecycle.approve("owner", config_digest="plan-v1")
+        self.assertEqual(lifecycle.approved_digest, "plan-v1")
+
+    def test_a_plan_changed_after_sign_off_cannot_be_approved(self):
+        lifecycle = ExperimentLifecycle("exp-1")
+        for role in REQUIRED_APPROVALS:
+            lifecycle.sign_off(role, role, config_digest="plan-v1")
+        lifecycle.sign_off("privacy_reviewer", "s", config_digest="plan-v2")
+        with self.assertRaises(LifecycleError) as ctx:
+            lifecycle.approve("owner", config_digest="plan-v2")
+        self.assertEqual(ctx.exception.code, "LIFECYCLE_STALE_SIGNOFF")
+        self.assertIn("program_owner", ctx.exception.message)
+        self.assertNotIn("privacy_reviewer", ctx.exception.message)
+
+    def test_reopening_clears_the_approved_fingerprint(self):
+        lifecycle = ExperimentLifecycle("exp-1")
+        for role in REQUIRED_APPROVALS:
+            lifecycle.sign_off(role, role, config_digest="plan-v1")
+        lifecycle.approve("owner", config_digest="plan-v1")
+        lifecycle.reopen("owner", reason="scope change")
+        self.assertIsNone(lifecycle.approved_digest)
+
+    def test_unbound_approval_is_unchanged(self):
+        # Callers that do not pass a fingerprint keep the v0.3 behaviour.
+        lifecycle = fully_signed(ExperimentLifecycle("exp-1"))
+        lifecycle.approve("owner")
+        self.assertIsNone(lifecycle.approved_digest)
+        self.assertNotIn("config_digest", lifecycle.audit.entries[-1].detail)
+
+
+class TestInterimLooks(unittest.TestCase):
+    def test_looks_are_numbered_and_only_taken_while_running(self):
+        lifecycle = fully_signed(ExperimentLifecycle("exp-1"))
+        with self.assertRaises(LifecycleError):
+            lifecycle.record_look("lead")
+        lifecycle.approve("owner")
+        lifecycle.start("ops")
+        self.assertEqual(lifecycle.record_look("lead"), 1)
+        self.assertEqual(lifecycle.record_look("lead"), 2)
+        self.assertEqual(lifecycle.audit.entries[-1].detail["look"], 2)
+
+    def test_completion_can_carry_the_result(self):
+        lifecycle = fully_signed(ExperimentLifecycle("exp-1"))
+        lifecycle.approve("owner")
+        lifecycle.start("ops")
+        lifecycle.complete("owner", summary="promote", decision="promote")
+        self.assertEqual(lifecycle.audit.entries[-1].detail["decision"], "promote")
+        self.assertIsNotNone(lifecycle.ended_at)

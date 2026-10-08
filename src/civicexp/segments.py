@@ -149,12 +149,19 @@ def analyze_segments(
         return SegmentAnalysis((), 0.0)
 
     # Overall effect, for the "helped overall but not this group" comparison.
-    overall_num = log.count_units_with_event(metric.numerator_event)
+    overall_num = log.count_units_meeting(
+        metric.numerator_event, excluding=metric.numerator_excludes
+    )
     overall_den = log.count_units_with_event(metric.denominator_event)
+    # Every effect below is oriented so that positive means "better for
+    # people", whichever way the metric itself is better. An abandonment
+    # rate falling is a benefit, and must not be read as harm.
+    sign = 1.0 if metric.target_direction == "increase" else -1.0
     overall_effect = 0.0
     if overall_den.get(control) and overall_den.get(treatment):
-        overall_effect = overall_num.get(treatment, 0) / overall_den[treatment] - (
-            overall_num.get(control, 0) / overall_den[control]
+        overall_effect = sign * (
+            overall_num.get(treatment, 0) / overall_den[treatment]
+            - overall_num.get(control, 0) / overall_den[control]
         )
 
     # Bucket each unit by its declared segment values.
@@ -162,9 +169,9 @@ def analyze_segments(
     for event in log:
         if event.event_type == metric.denominator_event:
             entered.setdefault(event.unit_pseudonym, (event.variant, event.payload))
-    converted = {
-        e.unit_pseudonym for e in log if e.event_type == metric.numerator_event
-    }
+    converted = log.units_meeting(
+        metric.numerator_event, excluding=metric.numerator_excludes
+    )
 
     threshold = config.privacy.suppression_threshold
     confidence = config.decision.confidence
@@ -232,9 +239,9 @@ def analyze_segments(
             )
             continue
 
-        effect = comparison.absolute_difference
+        effect = sign * comparison.absolute_difference
         corrected = survives.get(index, False)
-        low, high = comparison.difference_interval
+        low, high = sorted(sign * bound for bound in comparison.difference_interval)
 
         if effect < 0 and corrected:
             outcome = SegmentOutcome.HARMED
@@ -251,12 +258,22 @@ def analyze_segments(
                 "points, but the signal does not survive correction for the number "
                 "of groups examined. Monitor rather than act."
             )
-        elif effect > 0 and corrected and low >= minimum_effect:
+        elif effect > 0 and corrected:
+            # A benefit that survives correction is a benefit, even if its
+            # smallest plausible size is under the bar set for the service as
+            # a whole. That bar governs adoption; calling such a group "not
+            # reached" would misstate what happened to it.
             outcome = SegmentOutcome.HELPED
             note = (
                 f"The change helped this group by {effect * 100:.1f} percentage "
                 f"points (range {low * 100:.1f} to {high * 100:.1f})."
             )
+            if low < minimum_effect:
+                note += (
+                    " The smallest plausible benefit is below the "
+                    f"{minimum_effect * 100:.1f} point bar set for the service as a "
+                    "whole."
+                )
         elif min(c_total, t_total) < 100:
             outcome = SegmentOutcome.TOO_FEW
             note = (

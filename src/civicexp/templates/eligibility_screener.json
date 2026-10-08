@@ -1,0 +1,111 @@
+{
+  "_template": {
+    "title": "Eligibility questionnaire step",
+    "summary": "Test the wording or order of the pre-screening questions that come before an application.",
+    "good_for": "Drop-off at the screener, people answering questions wrongly, eligible people screening themselves out.",
+    "typical_change": "Rewriting a question in plain language, adding an example, or splitting a compound question."
+  },
+  "experiment": {
+    "id": "exp-eligibility-screener-001",
+    "name": "Eligibility screener: plainer questions",
+    "status": "draft",
+    "owner_team": "FILL IN: which team owns the screener",
+    "description": "FILL IN: the current questions, the changed wording, and why. State explicitly that no eligibility rule changes: the same answers lead to the same result, only the way the questions are asked differs."
+  },
+  "scope": {
+    "service_area": "eligibility / pre-screening questionnaire",
+    "jurisdictions": [
+      "FILL IN"
+    ],
+    "channels": [
+      "web"
+    ]
+  },
+  "hypothesis": {
+    "statement": "FILL IN: If the screener asks <question> as <new wording>, more people will finish it, without fewer of them going on to submit an application."
+  },
+  "assignment": {
+    "salt": "GENERATE WITH: civicexp salt",
+    "control_variant": "control",
+    "enrolled_fraction": 1.0
+  },
+  "variants": {
+    "control": {
+      "description": "Current screener questions",
+      "traffic_share": 0.5
+    },
+    "treatment": {
+      "description": "FILL IN: the rewritten questions",
+      "traffic_share": 0.5
+    }
+  },
+  "eligibility": {
+    "include": [
+      {
+        "field": "channel",
+        "operator": "eq",
+        "value": "web"
+      }
+    ],
+    "exclude": [
+      {
+        "field": "staff_assisted",
+        "operator": "eq",
+        "value": true
+      }
+    ]
+  },
+  "metrics": {
+    "primary": {
+      "name": "screener_completion_rate",
+      "definition": "Share of people who started the eligibility questionnaire and finished it, counted once per person.",
+      "kind": "proportion",
+      "numerator_event": "step_completed",
+      "denominator_event": "experiment_assigned",
+      "target_direction": "increase",
+      "minimum_effect_of_interest": 0.03
+    },
+    "guardrails": [
+      {
+        "use": "completion_rate",
+        "max_tolerated_increase": 0.02
+      },
+      {
+        "use": "returned_for_information_rate",
+        "max_tolerated_increase": 0.02
+      },
+      {
+        "use": "support_contact_rate",
+        "max_tolerated_increase": 0.02
+      }
+    ]
+  },
+  "segments": [
+    "preferred_language",
+    "device_type"
+  ],
+  "sample_size": {
+    "baseline_rate": 0.7,
+    "expected_units_per_group": 5000,
+    "planned_duration_days": 28
+  },
+  "analysis": {
+    "confidence": 0.95,
+    "power": 0.8,
+    "planned_looks": 4,
+    "require_practical_significance": true
+  },
+  "data_governance": {
+    "pii_default": "none",
+    "approved_pii_fields": [],
+    "retention_days": 90,
+    "suppression_threshold": 11,
+    "allow_row_level_export": false,
+    "reporting_level": "aggregated"
+  },
+  "operations": {
+    "launch_checklist_required": true,
+    "monitoring_cadence": "daily",
+    "rollback_owner_role": "operations_lead"
+  }
+}

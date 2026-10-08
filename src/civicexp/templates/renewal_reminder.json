@@ -1,0 +1,114 @@
+{
+  "_template": {
+    "title": "Renewal or recertification reminder",
+    "summary": "Test the wording, timing, or channel of a reminder that a benefit is due for renewal.",
+    "good_for": "People losing coverage or benefits for paperwork reasons while still eligible (procedural churn).",
+    "typical_change": "Naming the deadline and the documents needed, sending earlier, or adding a second reminder."
+  },
+  "experiment": {
+    "id": "exp-renewal-reminder-001",
+    "name": "Renewal reminder: name the deadline and documents",
+    "status": "draft",
+    "owner_team": "FILL IN: which team owns renewal notices",
+    "description": "FILL IN: the current reminder, the changed one, and why. Only the reminder changes; the renewal deadline, the required documents, and the renewal process stay the same."
+  },
+  "scope": {
+    "service_area": "renewals / recertification reminders",
+    "jurisdictions": [
+      "FILL IN"
+    ],
+    "channels": [
+      "sms",
+      "email",
+      "mail"
+    ]
+  },
+  "hypothesis": {
+    "statement": "FILL IN: If the reminder <changes how>, more people will submit their renewal before the deadline, without more renewals being returned for missing information."
+  },
+  "assignment": {
+    "salt": "GENERATE WITH: civicexp salt",
+    "control_variant": "control",
+    "enrolled_fraction": 1.0
+  },
+  "variants": {
+    "control": {
+      "description": "Current renewal reminder",
+      "traffic_share": 0.5
+    },
+    "treatment": {
+      "description": "FILL IN: the changed reminder",
+      "traffic_share": 0.5
+    }
+  },
+  "eligibility": {
+    "include": [
+      {
+        "field": "renewal_due",
+        "operator": "eq",
+        "value": true
+      },
+      {
+        "field": "contact_method_on_file",
+        "operator": "eq",
+        "value": true
+      }
+    ],
+    "exclude": [
+      {
+        "field": "opted_out_of_messages",
+        "operator": "eq",
+        "value": true
+      }
+    ]
+  },
+  "metrics": {
+    "primary": {
+      "name": "renewal_submitted_rate",
+      "definition": "Share of people sent a renewal reminder who then submitted their renewal successfully, counted once per person.",
+      "kind": "proportion",
+      "numerator_event": "submission_succeeded",
+      "denominator_event": "experiment_assigned",
+      "target_direction": "increase",
+      "minimum_effect_of_interest": 0.03
+    },
+    "guardrails": [
+      {
+        "use": "returned_for_information_rate",
+        "max_tolerated_increase": 0.02
+      },
+      {
+        "use": "support_contact_rate",
+        "max_tolerated_increase": 0.02
+      }
+    ]
+  },
+  "segments": [
+    "preferred_language",
+    "channel"
+  ],
+  "sample_size": {
+    "baseline_rate": 0.6,
+    "expected_units_per_group": 4000,
+    "planned_duration_days": 45
+  },
+  "analysis": {
+    "confidence": 0.95,
+    "power": 0.8,
+    "planned_looks": 3,
+    "require_practical_significance": true
+  },
+  "data_governance": {
+    "pii_default": "none",
+    "approved_pii_fields": [],
+    "retention_days": 90,
+    "suppression_threshold": 11,
+    "allow_row_level_export": false,
+    "reporting_level": "aggregated"
+  },
+  "operations": {
+    "launch_checklist_required": true,
+    "monitoring_cadence": "weekly",
+    "rollback_owner_role": "operations_lead"
+  }
+}

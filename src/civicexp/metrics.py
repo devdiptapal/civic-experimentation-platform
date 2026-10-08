@@ -16,7 +16,12 @@ semantics can still write the metric out longhand; referencing the standard
 one is a statement that the result is comparable with everyone else's.
 
 The metrics here cover the service outcomes named in the project roadmap:
-online abandonment, time to complete, and successful first-time submission.
+online abandonment, time to complete, successful first-time submission,
+applications returned for missing information, and processing time.
+
+Some outcomes are defined by something *not* happening -- abandonment is
+entering and never submitting. Those use ``numerator_excludes``: count the
+units that produced the numerator event and none of the excluded ones.
 """
 
 from __future__ import annotations
@@ -25,7 +30,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-__all__ = ["StandardMetric", "STANDARD_METRICS", "expand_metric", "describe_library"]
+__all__ = [
+    "StandardMetric",
+    "STANDARD_METRICS",
+    "expand_metric",
+    "describe_library",
+    "format_effect",
+    "standard_metric_for",
+]
 
 
 @dataclass(frozen=True)
@@ -44,9 +56,12 @@ class StandardMetric:
     #: Always a starting point for discussion, never a default that is
     #: silently applied -- the config must state its own.
     typical_effect_of_interest: float
+    #: Units that produced any of these events are removed from the
+    #: numerator. How "entered and did not submit" is expressed.
+    numerator_excludes: tuple[str, ...] = ()
 
     def to_config(self, **overrides: Any) -> dict[str, Any]:
-        base = {
+        base: dict[str, Any] = {
             "name": self.name,
             "definition": self.definition,
             "kind": self.kind,
@@ -54,6 +69,8 @@ class StandardMetric:
             "denominator_event": self.denominator_event,
             "target_direction": self.target_direction,
         }
+        if self.numerator_excludes:
+            base["numerator_excludes"] = list(self.numerator_excludes)
         base.update(overrides)
         return base
 
@@ -79,11 +96,12 @@ STANDARD_METRICS: Mapping[str, StandardMetric] = {
     "abandonment_rate": StandardMetric(
         name="abandonment_rate",
         definition=(
-            "Share of people who entered the workflow and never submitted, "
-            "counted once per person."
+            "Share of people who entered the workflow and never submitted "
+            "successfully, counted once per person."
         ),
         kind="proportion",
-        numerator_event="step_viewed",
+        numerator_event="experiment_assigned",
+        numerator_excludes=("submission_succeeded",),
         denominator_event="experiment_assigned",
         target_direction="decrease",
         why=(
@@ -97,11 +115,12 @@ STANDARD_METRICS: Mapping[str, StandardMetric] = {
     "first_time_success_rate": StandardMetric(
         name="first_time_success_rate",
         definition=(
-            "Share of people who submitted successfully without any failed attempt "
-            "beforehand, counted once per person."
+            "Share of people who attempted a submission and succeeded without "
+            "any failed attempt, counted once per person."
         ),
         kind="proportion",
         numerator_event="submission_succeeded",
+        numerator_excludes=("submission_failed",),
         denominator_event="submission_attempted",
         target_direction="increase",
         why=(
@@ -163,7 +182,77 @@ STANDARD_METRICS: Mapping[str, StandardMetric] = {
         ),
         typical_effect_of_interest=60.0,
     ),
+    "returned_for_information_rate": StandardMetric(
+        name="returned_for_information_rate",
+        definition=(
+            "Share of successful submissions later returned to the applicant for "
+            "missing or incorrect information, counted once per person."
+        ),
+        kind="proportion",
+        numerator_event="submission_returned",
+        denominator_event="submission_succeeded",
+        target_direction="decrease",
+        why=(
+            "A submission that comes back for missing information looks like a "
+            "success at the front door and is a failure in the back office. It "
+            "costs caseworker time, delays the applicant, and is a common route "
+            "to a procedural denial for someone who was eligible."
+        ),
+        typical_effect_of_interest=0.02,
+    ),
+    "time_to_process": StandardMetric(
+        name="time_to_process",
+        definition=(
+            "Seconds from a successful submission to the agency finishing "
+            "processing it, for submissions processed within the pilot window. "
+            "Records that processing finished, never what was decided."
+        ),
+        kind="duration",
+        numerator_event="processing_completed",
+        denominator_event="submission_succeeded",
+        target_direction="decrease",
+        why=(
+            "Faster processing is faster access to the benefit. A front-end "
+            "change that produces cleaner submissions should show up here; one "
+            "that pushes incomplete applications through faster will show up "
+            "as a longer back-office queue."
+        ),
+        typical_effect_of_interest=86400.0,
+    ),
 }
+
+
+def format_effect(value: float, kind: str) -> str:
+    """Render an effect size in the unit a program manager thinks in."""
+    if kind != "duration":
+        return f"{value * 100:.1f} percentage points"
+    seconds = abs(value)
+    if seconds >= 86400:
+        return f"{value / 86400:.1f} days"
+    if seconds >= 3600:
+        return f"{value / 3600:.1f} hours"
+    if seconds >= 120:
+        return f"{value / 60:.1f} minutes"
+    return f"{value:.0f} seconds"
+
+
+def standard_metric_for(spec: Any) -> str | None:
+    """The standard metric a config's metric is identical to, if any.
+
+    A result is only comparable with another agency's when the definition
+    matches exactly, so this checks every field that affects the number,
+    not only the name.
+    """
+    standard = STANDARD_METRICS.get(getattr(spec, "name", ""))
+    if standard is None:
+        return None
+    same = (
+        spec.kind == standard.kind
+        and spec.numerator_event == standard.numerator_event
+        and spec.denominator_event == standard.denominator_event
+        and tuple(getattr(spec, "numerator_excludes", ())) == standard.numerator_excludes
+    )
+    return standard.name if same else None
 
 
 def expand_metric(spec: Mapping[str, Any]) -> dict[str, Any]:
@@ -197,7 +286,7 @@ def describe_library() -> str:
         lines.append(f"    {metric.definition}")
         lines.append(f"    Why it matters: {metric.why}")
         if metric.kind == "duration":
-            starting = f"{metric.typical_effect_of_interest:.0f} seconds"
+            starting = format_effect(metric.typical_effect_of_interest, "duration")
         else:
             starting = f"{metric.typical_effect_of_interest:.0%}"
         lines.append(f"    Starting point for discussion: {starting}")

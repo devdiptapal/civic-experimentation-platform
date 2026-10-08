@@ -145,6 +145,11 @@ package.
 installing anything, so the property cannot silently lapse. PyYAML is
 optional and needed only for YAML configs; JSON works without it.
 
+> **v0.4:** the hosted platform (`civicexp serve`) adds authenticated accounts,
+> role checks on every action, API keys, login throttling, and an enforced
+> retention job. The rows below still apply to library-only use, and TLS,
+> encryption at rest, and network rate limiting remain the agency's job.
+
 ## Threats NOT addressed
 
 An agency must handle these itself before operational use.

@@ -73,17 +73,22 @@ def _signed_pct(value: float, places: int = 1) -> str:
     return f"{value * 100:+.{places}f} percentage points"
 
 
-def _plain_uncertainty(comparison: ProportionComparison) -> str:
+def _plain_uncertainty(
+    comparison: ProportionComparison, target_direction: str = "increase"
+) -> str:
     low, high = comparison.difference_interval
     confidence = _pct(comparison.confidence, 0)
+    higher, lower = (
+        ("better", "worse") if target_direction == "increase" else ("worse", "better")
+    )
     if low > 0:
         return (
-            f"We are {confidence} confident the tested version is better, by "
+            f"We are {confidence} confident the tested version is {higher}, by "
             f"somewhere between {low * 100:.1f} and {high * 100:.1f} percentage points."
         )
     if high < 0:
         return (
-            f"We are {confidence} confident the tested version is worse, by "
+            f"We are {confidence} confident the tested version is {lower}, by "
             f"somewhere between {abs(high) * 100:.1f} and {abs(low) * 100:.1f} "
             "percentage points."
         )
@@ -197,7 +202,7 @@ def render_markdown(
         add("")
         add(f"**Difference:** {_signed_pct(primary.absolute_difference)}")
         add("")
-        add(_plain_uncertainty(primary))
+        add(_plain_uncertainty(primary, metric.target_direction))
         add("")
         add(
             f"Before launch, the program recorded that a change of at least "

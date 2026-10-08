@@ -30,7 +30,7 @@ from typing import Any
 from .errors import EventError
 from .privacy import PrivacyPolicy
 
-__all__ = ["EVENT_TYPES", "Event", "EventLog", "parse_timestamp"]
+__all__ = ["EVENT_TYPES", "Event", "EventLog", "append_event", "parse_timestamp"]
 
 #: The event taxonomy from ``docs/Metrics-Schema.md``.
 EVENT_TYPES: tuple[str, ...] = (
@@ -41,6 +41,12 @@ EVENT_TYPES: tuple[str, ...] = (
     "submission_succeeded",
     "submission_failed",
     "support_contacted",
+    # Outcomes that happen after submission, inside the agency's own
+    # process. The project plan names both: an application "returned for
+    # missing information", and "faster processing". Neither records a
+    # determination -- only that the step happened, and when.
+    "submission_returned",
+    "processing_completed",
 )
 
 _PSEUDONYM_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -228,9 +234,7 @@ class EventLog:
         self.validate(event)
         self._events.append(event)
         if self.path is not None:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            with self.path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(event.to_dict(), sort_keys=True) + "\n")
+            append_event(self.path, event)
         return event
 
     # -- reading -----------------------------------------------------------
@@ -286,6 +290,40 @@ class EventLog:
                 seen.setdefault(event.variant, set()).add(event.unit_pseudonym)
         return {variant: len(units) for variant, units in seen.items()}
 
+    def units_meeting(
+        self, event_type: str, *, excluding: Iterable[str] = ()
+    ) -> set[str]:
+        """Distinct units that produced ``event_type`` and none of ``excluding``.
+
+        This is how a metric says "people who did X without Y": abandonment
+        is people who entered and did not submit, and first-time success is
+        people who submitted without a failed attempt. Both are absences,
+        and an absence cannot be logged as an event of its own.
+        """
+        excluded = set(excluding)
+        reached: set[str] = set()
+        disqualified: set[str] = set()
+        for event in self._events:
+            if event.event_type == event_type:
+                reached.add(event.unit_pseudonym)
+            if event.event_type in excluded:
+                disqualified.add(event.unit_pseudonym)
+        return reached - disqualified
+
+    def count_units_meeting(
+        self, event_type: str, *, excluding: Iterable[str] = ()
+    ) -> dict[str, int]:
+        """Per variant, :meth:`units_meeting` counted rather than listed."""
+        excluded = tuple(excluding)
+        if not excluded:
+            return self.count_units_with_event(event_type)
+        qualifying = self.units_meeting(event_type, excluding=excluded)
+        seen: dict[str, set[str]] = {}
+        for event in self._events:
+            if event.event_type == event_type and event.unit_pseudonym in qualifying:
+                seen.setdefault(event.variant, set()).add(event.unit_pseudonym)
+        return {variant: len(units) for variant, units in seen.items()}
+
     def durations_by_variant(
         self, start_event: str, end_event: str
     ) -> dict[str, list[float]]:
@@ -316,3 +354,16 @@ class EventLog:
                 continue
             out.setdefault(key[1], []).append((end - start).total_seconds())
         return out
+
+
+def append_event(path: str | os.PathLike[str], event: Event) -> None:
+    """Append one already-validated event to a JSON Lines file.
+
+    The single place the on-disk line format is decided, shared by
+    :meth:`EventLog.record` and the collection service, so that a log
+    written by either one reads back identically.
+    """
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event.to_dict(), sort_keys=True) + "\n")

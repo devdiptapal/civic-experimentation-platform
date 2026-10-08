@@ -12,6 +12,16 @@ around the questions a pilot team asks in order:
 * ``report``   -- give me the readout to circulate.
 * ``verify``   -- has the audit trail been altered?
 
+The hosted platform adds commands that work on a *workspace* -- the folder
+holding a team's evaluations, accounts, and keys:
+
+* ``workspace init``, ``users``, ``keys`` -- set one up and give people access
+* ``serve``    -- run the web application and collection API
+* ``monitor``  -- check every evaluation; exit 2 if anything needs a person
+* ``retention``-- delete event data past its approved retention period
+* ``demo``     -- build a populated, synthetic workspace to explore
+* ``assign-batch``, ``import-csv`` -- run a pilot from spreadsheet exports
+
 Every command exits non-zero on failure so it can be wired into a pipeline,
 and prints errors with the stable error codes from :mod:`civicexp.errors`.
 """
@@ -19,7 +29,9 @@ and prints errors with the stable error codes from :mod:`civicexp.errors`.
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
+import os
 import secrets
 import sys
 from collections.abc import Sequence
@@ -203,6 +215,19 @@ def cmd_case_summary(args: argparse.Namespace) -> int:
         return EXIT_ERROR
     result = analyze(config, log, treatment_variant=args.variant)
     markdown = render_case_summary(result, jurisdiction=args.jurisdiction or "")
+    if args.record:
+        from . import __version__ as version
+        from .library import build_case_record
+
+        raw = json.loads(Path(args.config).read_text(encoding="utf-8")) if str(
+            args.config).endswith(".json") else None
+        record = build_case_record(
+            result, raw_config=raw, jurisdiction=args.jurisdiction or "",
+            synthetic=args.synthetic, platform_version=version,
+        )
+        Path(args.record).write_text(json.dumps(record, indent=2, sort_keys=True) + "\n",
+                                     encoding="utf-8")
+        print(f"Wrote case record to {args.record}", file=sys.stderr)
     if args.out:
         Path(args.out).write_text(markdown, encoding="utf-8")
         print(f"Wrote case summary to {args.out}")
@@ -424,6 +449,320 @@ def cmd_salt(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Workspace commands
+# ---------------------------------------------------------------------------
+
+DEFAULT_WORKSPACE = "civicexp-workspace"
+
+
+def _actor() -> str:
+    try:
+        return f"command-line:{getpass.getuser()}"
+    except Exception:  # pragma: no cover - no login name available
+        return "command-line"
+
+
+def _workspace(args: argparse.Namespace):
+    from .workspace import Workspace
+
+    return Workspace(args.workspace)
+
+
+def _read_password(args: argparse.Namespace, *, prompt: str = "Password") -> str:
+    if getattr(args, "password_stdin", False):
+        return sys.stdin.readline().rstrip("\n")
+    first = getpass.getpass(f"{prompt}: ")
+    if getpass.getpass(f"{prompt} again: ") != first:
+        raise CivicExpError("the two passwords did not match", code="AUTH_MISMATCH")
+    return first
+
+
+def _split(text: str | None) -> list[str]:
+    return [part.strip() for part in (text or "").split(",") if part.strip()]
+
+
+def cmd_workspace_init(args: argparse.Namespace) -> int:
+    from .workspace import Workspace
+
+    ws = Workspace.create(args.path, name=args.name, jurisdiction=args.jurisdiction or "",
+                          actor=_actor())
+    print(f"Created workspace '{ws.name}' in {args.path}")
+    print()
+    print("Next:")
+    print(f"  1. civicexp users add <your-name> --roles admin --workspace {args.path}")
+    print("  2. add one person per review role (program_owner, operations_lead,")
+    print("     privacy_reviewer, legal_policy_reviewer, evaluation_lead)")
+    print(f"  3. civicexp serve --workspace {args.path}")
+    print()
+    print("The workspace holds password hashes and pilot data. Keep it on encrypted")
+    print("storage, back it up, and never commit it to a repository.")
+    return EXIT_OK
+
+
+def cmd_users(args: argparse.Namespace) -> int:
+    from .auth import ROLES
+
+    ws = _workspace(args)
+    actor = _actor()
+    if args.users_command == "list":
+        users = ws.users.list()
+        if not users:
+            print("No accounts yet. Add one with: civicexp users add <name> --roles admin")
+        for user in users:
+            flag = "  (disabled)" if user.disabled else ""
+            print(f"  {user.username:<20} {', '.join(sorted(user.roles)) or 'no roles'}{flag}")
+        return EXIT_OK
+    if args.users_command == "roles-help":
+        from .auth import ROLE_DESCRIPTIONS
+
+        for role in ROLES:
+            print(f"  {role:<22} {ROLE_DESCRIPTIONS[role]}")
+        return EXIT_OK
+    if args.users_command == "add":
+        password = _read_password(args)
+        user = ws.add_user(actor, args.username, password=password,
+                           roles=_split(args.roles), display_name=args.name or "")
+        print(f"Created {user.username} with roles: {', '.join(sorted(user.roles))}")
+        return EXIT_OK
+    if args.users_command == "roles":
+        user = ws.set_user_roles(actor, args.username, _split(args.roles))
+        print(f"{user.username} now holds: {', '.join(sorted(user.roles)) or 'no roles'}")
+        return EXIT_OK
+    if args.users_command == "passwd":
+        ws.reset_password(actor, args.username, _read_password(args, prompt="New password"))
+        print(f"Password set for {args.username}. Their existing sessions end when the "
+              "server next checks them.")
+        return EXIT_OK
+    if args.users_command in ("disable", "enable"):
+        ws.set_user_disabled(actor, args.username, args.users_command == "disable")
+        print(f"{args.username} {args.users_command}d.")
+        return EXIT_OK
+    return EXIT_ERROR  # pragma: no cover - argparse enforces the choices
+
+
+def cmd_keys(args: argparse.Namespace) -> int:
+    ws = _workspace(args)
+    if args.keys_command == "list":
+        keys = ws.keys.list()
+        if not keys:
+            print("No keys yet.")
+        for key in keys:
+            scope = ", ".join(sorted(key.scopes))
+            where = ", ".join(sorted(key.experiments)) or "every evaluation"
+            state = "revoked" if key.revoked else "active"
+            print(f"  {key.key_id}  {key.name:<28} {scope:<14} {where}  [{state}]")
+        return EXIT_OK
+    if args.keys_command == "create":
+        experiments = [args.experiment] if args.experiment else []
+        if args.experiment:
+            ws.experiment(args.experiment)  # fail now if it does not exist
+        key, token = ws.create_key(_actor(), args.name, scopes=_split(args.scopes),
+                                   experiments=experiments)
+        print(f"Created key {key.key_id} ({', '.join(sorted(key.scopes))}).")
+        print("Copy it now; it is stored only as a digest and will not be shown again:")
+        print()
+        print(f"  {token}")
+        return EXIT_OK
+    if args.keys_command == "revoke":
+        ws.revoke_key(_actor(), args.key_id)
+        print(f"Revoked {args.key_id}.")
+        return EXIT_OK
+    return EXIT_ERROR  # pragma: no cover
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    from .web import serve
+
+    if args.init_if_missing and not (Path(args.workspace) / "workspace.json").exists():
+        from .workspace import Workspace
+
+        Workspace.create(args.workspace, name=os.environ.get(
+            "CIVICEXP_WORKSPACE_NAME", "Civic experimentation workspace"), actor=_actor())
+        print(f"Created a new workspace in {args.workspace}.")
+    _workspace(args)  # fail with a clear message before binding a port
+    serve(args.workspace, host=args.host, port=args.port,
+          secure_cookies=args.secure_cookies, trust_proxy=args.trust_proxy)
+    return EXIT_OK
+
+
+def cmd_monitor(args: argparse.Namespace) -> int:
+    from .monitor import check_workspace, format_alerts, post_webhook
+
+    ws = _workspace(args)
+    alerts = check_workspace(ws)
+    if not args.include_info:
+        alerts = [a for a in alerts if a.severity != "info"]
+    if args.json:
+        print(json.dumps({"alerts": [a.to_dict() for a in alerts]}, indent=2))
+    else:
+        print(format_alerts(alerts))
+    if args.webhook and alerts:
+        status = post_webhook(args.webhook, alerts, workspace_name=ws.name)
+        print(f"Posted {len(alerts)} alert(s) to the webhook (HTTP {status}).", file=sys.stderr)
+    needs_person = any(a.severity in ("critical", "warning") for a in alerts)
+    return EXIT_ATTENTION if needs_person else EXIT_OK
+
+
+def cmd_retention(args: argparse.Namespace) -> int:
+    ws = _workspace(args)
+    due_any = False
+    for record in ws.experiments():
+        due = record.retention_due()
+        if due is None:
+            continue
+        holding = record.events_path.exists() or record.dry_run_path.exists()
+        from datetime import datetime, timezone
+
+        if datetime.now(timezone.utc) < due or not holding:
+            continue
+        due_any = True
+        if args.apply:
+            deleted = record.apply_retention(_actor())
+            names = ", ".join(sorted(deleted or {}))
+            print(f"  {record.id}: deleted {names} (due {due.date()})")
+        else:
+            print(f"  {record.id}: event data due for deletion since {due.date()}")
+    if not due_any:
+        print("Nothing is past its retention period.")
+        return EXIT_OK
+    if not args.apply:
+        print("\nRun again with --apply to delete. The plan, the decision record, and the "
+              "readout are kept.")
+        return EXIT_ATTENTION
+    return EXIT_OK
+
+
+def cmd_demo(args: argparse.Namespace) -> int:
+    import shutil
+
+    from .demo import DEMO_PEOPLE, build_demo
+
+    target = Path(args.path)
+    if target.exists() and any(target.iterdir()):
+        if not args.force:
+            print(f"error: {target} is not empty. Choose another path, or pass --force to "
+                  "replace it.", file=sys.stderr)
+            return EXIT_ERROR
+        if not (target / "workspace.json").exists():
+            print(f"error: {target} is not a workspace; refusing to delete it.",
+                  file=sys.stderr)
+            return EXIT_ERROR
+        shutil.rmtree(target)
+    print("Building a demonstration workspace with synthetic data. This takes about a "
+          "minute...")
+    ws, password = build_demo(target, password=args.password)
+    print(f"\nCreated '{ws.name}' in {target}. Every record in it is synthetic.\n")
+    print("Sign in as any of these people (all share one password):\n")
+    for username, _, roles in DEMO_PEOPLE:
+        print(f"  {username:<12} {', '.join(roles)}")
+    print(f"\n  password: {password}\n")
+    print(f"Start it with:  civicexp serve --workspace {target}")
+    return EXIT_OK
+
+
+def _collector_for(args: argparse.Namespace):
+    """The collector for a workspace evaluation, or for a config + events file."""
+    from .collect import Collector
+
+    if args.workspace and args.experiment:
+        return _workspace(args).experiment(args.experiment).collector()
+    if not (args.config and args.events):
+        raise CivicExpError(
+            "say where to record: either --workspace and --experiment, or --config and "
+            "--events",
+            code="CSV_NO_TARGET",
+        )
+    return Collector(_load(args.config), args.events)
+
+
+def cmd_assign_batch(args: argparse.Namespace) -> int:
+    from .csvio import assign_batch, read_csv_text, write_csv_text
+
+    collector = _collector_for(args)
+    fields, rows = read_csv_text(Path(args.csv).read_text(encoding="utf-8"))
+    if args.id_column not in fields:
+        print(f"error: no column named {args.id_column!r}; columns are {fields}",
+              file=sys.stderr)
+        return EXIT_ERROR
+    report, out = assign_batch(collector, rows, id_column=args.id_column,
+                               attribute_columns=_split(args.attribute_columns) or None)
+    Path(args.out).write_text(
+        write_csv_text([args.id_column, "version", "in_evaluation"], out), encoding="utf-8")
+    newly = ", ".join(f"{k} {v:,}" for k, v in sorted(report.newly_enrolled.items())) or "none"
+    print(f"Read {report.rows:,} rows.")
+    print(f"  Newly enrolled:     {newly}")
+    print(f"  Already enrolled:   {report.already_enrolled:,}")
+    print(f"  Not in evaluation:  {report.not_in_evaluation:,} (they get the current version)")
+    for line, problem in report.problems[:20]:
+        print(f"  line {line}: {problem}", file=sys.stderr)
+    print(f"Wrote the send list to {args.out}. It contains identifiers: handle it like the "
+          "export it came from.")
+    return EXIT_ATTENTION if report.problems else EXIT_OK
+
+
+def cmd_import_csv(args: argparse.Namespace) -> int:
+    from .csvio import (
+        import_outcomes,
+        parse_event_map,
+        profile_columns,
+        read_csv_text,
+        resolve_timezone,
+    )
+
+    fields, rows = read_csv_text(Path(args.csv).read_text(encoding="utf-8"))
+    if args.profile:
+        print(f"{len(rows):,} rows, {len(fields)} columns:\n")
+        for column in profile_columns(fields, rows):
+            values = f"  values: {', '.join(column['values'])}" if column["values"] else ""
+            flag = "  (named like personal data)" if column["named_like_personal_data"] else ""
+            print(f"  {column['column']:<24} {column['kind']:<12} "
+                  f"{column['distinct']:>6,} distinct{flag}{values}")
+        return EXIT_OK
+    missing = [c for c in (args.id_column, args.event_column, args.timestamp_column)
+               if c not in fields]
+    if missing:
+        print(f"error: missing column(s) {missing}; columns are {fields}. Run with --profile "
+              "to see what the file holds.", file=sys.stderr)
+        return EXIT_ERROR
+    collector = _collector_for(args)
+    report = import_outcomes(
+        collector, rows, id_column=args.id_column, event_column=args.event_column,
+        timestamp_column=args.timestamp_column, event_map=parse_event_map(args.event_map),
+        zone=resolve_timezone(args.timezone), dry_run=args.dry_run,
+    )
+    verb = "Would record" if args.dry_run else "Recorded"
+    print(f"Read {report.rows:,} rows. {verb} {report.accepted:,}.")
+    for label, count in sorted(report.unmapped.items()):
+        print(f"  skipped {count:,} row(s) with outcome {label!r} (not in the event map)")
+    for code, count in sorted(report.rejected_by_code().items()):
+        print(f"  rejected {count:,} row(s): {code}")
+    for line, code, message in report.rejected[:10]:
+        print(f"  line {line}: [{code}] {message}", file=sys.stderr)
+    return EXIT_ATTENTION if report.rejected else EXIT_OK
+
+
+def cmd_library(args: argparse.Namespace) -> int:
+    ws = _workspace(args)
+    if args.library_command == "list":
+        records = ws.library.list()
+        if not records:
+            print("The evidence library is empty.")
+        for case in records:
+            tag = " [synthetic]" if case.synthetic else ""
+            print(f"  {case.decision.upper():<12} {case.title} — "
+                  f"{case.jurisdiction or 'unattributed'}{tag}")
+            print(f"  {'':<12} {case.case_id}")
+        return EXIT_OK
+    if args.library_command == "import":
+        case = ws.library.import_json(Path(args.file).read_text(encoding="utf-8"),
+                                      replace=args.replace)
+        ws.record_admin("library:imported", _actor(), case_id=case.case_id)
+        print(f"Added {case.case_id}.")
+        return EXIT_OK
+    return EXIT_ERROR  # pragma: no cover
+
+
+# ---------------------------------------------------------------------------
 # Parser
 # ---------------------------------------------------------------------------
 
@@ -476,6 +815,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--variant")
     p.add_argument("--jurisdiction", help="your agency or county, for the header")
     p.add_argument("--out")
+    p.add_argument("--record", help="also write the machine-readable case record (JSON) "
+                   "that an evidence library imports")
+    p.add_argument("--synthetic", action="store_true",
+                   help="mark the case record as describing synthetic data")
     p.set_defaults(func=cmd_case_summary)
 
     p = sub.add_parser("validate", help="check an experiment configuration before launch")
@@ -547,6 +890,138 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("salt", help="generate a random assignment salt")
     p.add_argument("--bytes", type=int, default=16)
     p.set_defaults(func=cmd_salt)
+
+    # -- the hosted platform --------------------------------------------------
+    default_ws = os.environ.get("CIVICEXP_WORKSPACE", DEFAULT_WORKSPACE)
+
+    def workspace_arg(parser: argparse.ArgumentParser) -> None:
+        parser.add_argument(
+            "--workspace", default=default_ws,
+            help=f"workspace folder (default: $CIVICEXP_WORKSPACE or {DEFAULT_WORKSPACE})",
+        )
+
+    p = sub.add_parser("workspace", help="create a workspace for the hosted platform")
+    wsub = p.add_subparsers(dest="workspace_command", required=True)
+    q = wsub.add_parser("init", help="create a new, empty workspace")
+    q.add_argument("path")
+    q.add_argument("--name", required=True, help="e.g. 'County Human Services Agency'")
+    q.add_argument("--jurisdiction", help="shown on published case records")
+    q.set_defaults(func=cmd_workspace_init)
+
+    p = sub.add_parser("users", help="manage accounts and roles in a workspace")
+    usub = p.add_subparsers(dest="users_command", required=True)
+    q = usub.add_parser("list", help="list accounts")
+    workspace_arg(q)
+    q = usub.add_parser("roles-help", help="explain each role")
+    workspace_arg(q)
+    q = usub.add_parser("add", help="create an account")
+    q.add_argument("username")
+    q.add_argument("--roles", required=True, help="comma separated; see users roles-help")
+    q.add_argument("--name", help="display name")
+    q.add_argument("--password-stdin", action="store_true",
+                   help="read the password from standard input instead of prompting")
+    workspace_arg(q)
+    q = usub.add_parser("roles", help="replace an account's roles")
+    q.add_argument("username")
+    q.add_argument("--roles", required=True)
+    workspace_arg(q)
+    q = usub.add_parser("passwd", help="set an account's password")
+    q.add_argument("username")
+    q.add_argument("--password-stdin", action="store_true")
+    workspace_arg(q)
+    for name in ("disable", "enable"):
+        q = usub.add_parser(name, help=f"{name} an account")
+        q.add_argument("username")
+        workspace_arg(q)
+    p.set_defaults(func=cmd_users)
+
+    p = sub.add_parser("keys", help="manage collection API keys")
+    ksub = p.add_subparsers(dest="keys_command", required=True)
+    q = ksub.add_parser("list")
+    workspace_arg(q)
+    q = ksub.add_parser("create", help="create a key; it is shown once")
+    q.add_argument("--name", required=True, help="which service will use it")
+    q.add_argument("--scopes", default="collect", help="collect, read, or collect,read")
+    q.add_argument("--experiment", help="limit the key to one evaluation")
+    workspace_arg(q)
+    q = ksub.add_parser("revoke")
+    q.add_argument("key_id")
+    workspace_arg(q)
+    p.set_defaults(func=cmd_keys)
+
+    p = sub.add_parser("serve", help="run the web application and collection API")
+    workspace_arg(p)
+    p.add_argument("--host", default="127.0.0.1",
+                   help="address to listen on (default: this machine only)")
+    p.add_argument("--port", type=int, default=8080)
+    p.add_argument("--secure-cookies", action="store_true",
+                   help="mark session cookies Secure; use when served over HTTPS")
+    p.add_argument("--trust-proxy", action="store_true",
+                   help="trust X-Forwarded-For/-Proto from a reverse proxy in front")
+    p.add_argument("--init-if-missing", action="store_true",
+                   help="create an empty workspace if none exists (for containers)")
+    p.set_defaults(func=cmd_serve)
+
+    p = sub.add_parser("monitor", help="check every evaluation; exit 2 if a person is needed")
+    workspace_arg(p)
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--webhook", help="https URL of a chat webhook to post alerts to")
+    p.add_argument("--include-info", action="store_true",
+                   help="also report informational items (waiting sign-offs, etc.)")
+    p.set_defaults(func=cmd_monitor)
+
+    p = sub.add_parser("retention", help="delete event data past its retention period")
+    workspace_arg(p)
+    p.add_argument("--apply", action="store_true", help="actually delete (default: report)")
+    p.set_defaults(func=cmd_retention)
+
+    p = sub.add_parser("demo", help="build a populated demonstration workspace")
+    p.add_argument("path", nargs="?", default="demo-workspace")
+    p.add_argument("--force", action="store_true", help="replace an existing demo workspace")
+    p.add_argument("--password", help="password for every demo account (default: random)")
+    p.set_defaults(func=cmd_demo)
+
+    def target_args(parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--workspace", help="workspace folder (with --experiment)")
+        parser.add_argument("--experiment", help="evaluation id in the workspace")
+        parser.add_argument("--config", help="experiment config (with --events), "
+                            "instead of a workspace")
+        parser.add_argument("--events", help="event log to append to (with --config)")
+
+    p = sub.add_parser("assign-batch", help="assign everyone in a spreadsheet and write a "
+                       "send list")
+    p.add_argument("csv", help="one row per person, with an identifier column")
+    p.add_argument("--id-column", required=True)
+    p.add_argument("--attribute-columns", help="columns to use for eligibility and equity "
+                   "(default: every column except the identifier)")
+    p.add_argument("--out", required=True, help="where to write the send list (CSV)")
+    target_args(p)
+    p.set_defaults(func=cmd_assign_batch)
+
+    p = sub.add_parser("import-csv", help="record outcomes from a spreadsheet export")
+    p.add_argument("csv")
+    p.add_argument("--profile", action="store_true",
+                   help="describe the file's columns (without showing identifiers) and stop")
+    p.add_argument("--id-column")
+    p.add_argument("--event-column")
+    p.add_argument("--timestamp-column")
+    p.add_argument("--event-map", help="LABEL=event_type,... for the export's own outcome "
+                   "labels")
+    p.add_argument("--timezone", help="zone of timestamps without one, e.g. "
+                   "America/Los_Angeles")
+    p.add_argument("--dry-run", action="store_true", help="check every row; record nothing")
+    target_args(p)
+    p.set_defaults(func=cmd_import_csv)
+
+    p = sub.add_parser("library", help="the workspace's evidence library")
+    lsub = p.add_subparsers(dest="library_command", required=True)
+    q = lsub.add_parser("list")
+    workspace_arg(q)
+    q = lsub.add_parser("import", help="add a case record from another agency")
+    q.add_argument("file")
+    q.add_argument("--replace", action="store_true")
+    workspace_arg(q)
+    p.set_defaults(func=cmd_library)
 
     return parser
 
